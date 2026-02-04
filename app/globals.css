@@ -129,3 +129,14 @@ body {
   content: attr(data-placeholder);
   color: hsl(var(--muted-foreground));
 }
+
+/* Multi-page document styling */
+.resume-pages,
+.cover-letter-pages {
+  position: relative;
+}
+
+.resume-pages > .document-paper,
+.cover-letter-pages > .document-paper {
+  flex-shrink: 0;
+}

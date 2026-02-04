@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ClipboardEvent, KeyboardEvent } from "react";
+import type { ClipboardEvent, KeyboardEvent, ReactNode } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { PAPER_DIMENSIONS } from "@/lib/resume-defaults";
 import { cn } from "@/lib/utils";
 import type { ResumeData, SectionKey, SkillEntry } from "@/types";
 import { Plus, Trash2 } from "lucide-react";
+import { usePagination } from "@/hooks/use-pagination";
 
 interface ResumeViewerProps {
   resumeData: ResumeData;
@@ -407,414 +408,384 @@ export function ResumeViewer({
     });
   };
 
-  const renderSummary = () => {
-    if (!sectionVisibility.summary) return null;
-    return (
-      <div>
-        <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-          Summary
-        </h2>
-        <EditableText
-          value={metadata.summary}
-          onChange={(summary) => updateMetadata({ summary })}
-          placeholder="Your professional summary will appear here..."
-          className="mt-2 text-sm leading-relaxed text-gray-700 dark:text-gray-300"
-          multiline
-        />
-      </div>
+  // Granular renderers for pagination
+  const renderSectionHeader = (title: string, addButton?: ReactNode) => (
+    <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
+      <h2 className="text-sm font-bold uppercase tracking-wide">{title}</h2>
+      {addButton}
+    </div>
+  );
+
+  const renderSummaryHeader = () =>
+    renderSectionHeader("Summary");
+
+  const renderSummaryContent = () => (
+    <EditableText
+      value={metadata.summary}
+      onChange={(summary) => updateMetadata({ summary })}
+      placeholder="Your professional summary will appear here..."
+      className="text-sm leading-relaxed text-gray-700 dark:text-gray-300"
+      multiline
+    />
+  );
+
+  const renderExperienceHeader = () =>
+    renderSectionHeader(
+      "Experience",
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+        onClick={addExperienceEntry}
+      >
+        <Plus className="h-3 w-3" />
+        Add Experience
+      </Button>
     );
-  };
 
-  const renderExperience = () => {
-    if (!sectionVisibility.experience) return null;
+  const renderExperienceItem = (entry: ResumeData["experience"][number]) => {
+    const primaryField =
+      experienceOrder === "title-first" ? "jobTitle" : "company";
+    const secondaryField =
+      experienceOrder === "title-first" ? "company" : "jobTitle";
+    const primaryFallback =
+      experienceOrder === "title-first" ? "Job Title" : "Company Name";
+    const secondaryFallback =
+      experienceOrder === "title-first" ? "Company Name" : "Job Title";
+
     return (
-      <div>
-        <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
-          <h2 className="text-sm font-bold uppercase tracking-wide">
-            Experience
-          </h2>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-            onClick={addExperienceEntry}
-          >
-            <Plus className="h-3 w-3" />
-            Add Experience
-          </Button>
-        </div>
-        {hasExperience ? (
-          <div className="mt-2 space-y-3">
-            {experience.map((entry) => {
-              const primaryField =
-                experienceOrder === "title-first" ? "jobTitle" : "company";
-              const secondaryField =
-                experienceOrder === "title-first" ? "company" : "jobTitle";
-              const primaryFallback =
-                experienceOrder === "title-first" ? "Job Title" : "Company Name";
-              const secondaryFallback =
-                experienceOrder === "title-first" ? "Company Name" : "Job Title";
-
-              return (
-                <div key={entry.id} className="group space-y-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                      <EditableText
-                        value={entry[primaryField]}
-                        onChange={(value) =>
-                          updateExperienceEntry(entry.id, {
-                            [primaryField]: value,
-                          } as Partial<ResumeData["experience"][number]>)
-                        }
-                        placeholder={primaryFallback}
-                      />
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-600 dark:text-gray-400">
-                        <EditableText
-                          value={entry.startDate}
-                          onChange={(value) =>
-                            updateExperienceEntry(entry.id, {
-                              startDate: value,
-                            })
-                          }
-                          placeholder="Start"
-                        />
-                        <span className="mx-1">-</span>
-                        <EditableText
-                          value={entry.endDate}
-                          onChange={(value) =>
-                            updateExperienceEntry(entry.id, { endDate: value })
-                          }
-                          placeholder="Present"
-                        />
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-                        onClick={() => removeExperienceEntry(entry.id)}
-                        aria-label="Remove experience"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="text-sm text-gray-700 dark:text-gray-300">
-                    <EditableText
-                      value={entry[secondaryField]}
-                      onChange={(value) =>
-                        updateExperienceEntry(entry.id, {
-                          [secondaryField]: value,
-                        } as Partial<ResumeData["experience"][number]>)
-                      }
-                      placeholder={secondaryFallback}
-                    />
-                    <span className="text-gray-400"> | </span>
-                    <EditableText
-                      value={entry.location}
-                      onChange={(value) =>
-                        updateExperienceEntry(entry.id, { location: value })
-                      }
-                      placeholder="Location"
-                    />
-                  </p>
-                  {entry.bullets.length > 0 && (
-                    <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
-                      {entry.bullets.map((bullet, idx) => (
-                        <li key={idx} className="group/bullet">
-                          <EditableText
-                            value={bullet}
-                            onChange={(value) =>
-                              updateExperienceBullet(entry.id, idx, value)
-                            }
-                            placeholder="Describe your accomplishment..."
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="ml-1 h-4 w-4 text-muted-foreground opacity-0 transition group-hover/bullet:opacity-100 hover:text-destructive"
-                            onClick={() =>
-                              removeExperienceBullet(entry.id, idx)
-                            }
-                            aria-label="Remove bullet"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-                    onClick={() => addExperienceBullet(entry.id)}
-                  >
-                    <Plus className="h-3 w-3" />
-                    Add Bullet
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
-            Add experience entries using the button above.
-          </p>
-        )}
-      </div>
-    );
-  };
-
-  const renderProjects = () => {
-    if (!sectionVisibility.projects || !hasProjects) {
-      return sectionVisibility.projects ? (
-        <div>
-          <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
-            <h2 className="text-sm font-bold uppercase tracking-wide">Projects</h2>
+      <div className="group space-y-1">
+        <div className="flex items-start justify-between gap-2">
+          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            <EditableText
+              value={entry[primaryField]}
+              onChange={(value) =>
+                updateExperienceEntry(entry.id, {
+                  [primaryField]: value,
+                } as Partial<ResumeData["experience"][number]>)
+              }
+              placeholder={primaryFallback}
+            />
+          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600 dark:text-gray-400">
+              <EditableText
+                value={entry.startDate}
+                onChange={(value) =>
+                  updateExperienceEntry(entry.id, {
+                    startDate: value,
+                  })
+                }
+                placeholder="Start"
+              />
+              <span className="mx-1">-</span>
+              <EditableText
+                value={entry.endDate}
+                onChange={(value) =>
+                  updateExperienceEntry(entry.id, { endDate: value })
+                }
+                placeholder="Present"
+              />
+            </span>
             <Button
               variant="ghost"
-              size="sm"
-              className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-              onClick={addProjectEntry}
+              size="icon"
+              className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+              onClick={() => removeExperienceEntry(entry.id)}
+              aria-label="Remove experience"
             >
-              <Plus className="h-3 w-3" />
-              Add Project
+              <Trash2 className="h-3 w-3" />
             </Button>
           </div>
-          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
-            Add project entries using the button above.
-          </p>
         </div>
-      ) : null;
-    }
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          <EditableText
+            value={entry[secondaryField]}
+            onChange={(value) =>
+              updateExperienceEntry(entry.id, {
+                [secondaryField]: value,
+              } as Partial<ResumeData["experience"][number]>)
+            }
+            placeholder={secondaryFallback}
+          />
+          <span className="text-gray-400"> | </span>
+          <EditableText
+            value={entry.location}
+            onChange={(value) =>
+              updateExperienceEntry(entry.id, { location: value })
+            }
+            placeholder="Location"
+          />
+        </p>
+        {entry.bullets.length > 0 && (
+          <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
+            {entry.bullets.map((bullet, idx) => (
+              <li key={idx} className="group/bullet">
+                <EditableText
+                  value={bullet}
+                  onChange={(value) =>
+                    updateExperienceBullet(entry.id, idx, value)
+                  }
+                  placeholder="Describe your accomplishment..."
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="ml-1 h-4 w-4 text-muted-foreground opacity-0 transition group-hover/bullet:opacity-100 hover:text-destructive"
+                  onClick={() =>
+                    removeExperienceBullet(entry.id, idx)
+                  }
+                  aria-label="Remove bullet"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+          onClick={() => addExperienceBullet(entry.id)}
+        >
+          <Plus className="h-3 w-3" />
+          Add Bullet
+        </Button>
+      </div>
+    );
+  };
 
-    return (
-      <div>
-        <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
-          <h2 className="text-sm font-bold uppercase tracking-wide">Projects</h2>
+  const renderExperienceEmpty = () => (
+    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+      Add experience entries using the button above.
+    </p>
+  );
+
+  const renderProjectsHeader = () =>
+    renderSectionHeader(
+      "Projects",
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+        onClick={addProjectEntry}
+      >
+        <Plus className="h-3 w-3" />
+        Add Project
+      </Button>
+    );
+
+  const renderProjectItem = (project: ResumeData["projects"][number]) => (
+    <div className="group space-y-1">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          <EditableText
+            value={project.name}
+            onChange={(value) =>
+              updateProjectEntry(project.id, { name: value })
+            }
+            placeholder="Project Name"
+          />
+        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            <EditableText
+              value={project.technologies.join(", ")}
+              onChange={(value) =>
+                updateProjectEntry(project.id, {
+                  technologies: parseCommaList(value),
+                })
+              }
+              placeholder="Technologies"
+            />
+          </span>
           <Button
             variant="ghost"
-            size="sm"
-            className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-            onClick={addProjectEntry}
+            size="icon"
+            className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+            onClick={() => removeProjectEntry(project.id)}
+            aria-label="Remove project"
           >
-            <Plus className="h-3 w-3" />
-            Add Project
+            <Trash2 className="h-3 w-3" />
           </Button>
         </div>
-        <div className="mt-2 space-y-3">
-          {projects.map((project) => (
-            <div key={project.id} className="group space-y-1">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                  <EditableText
-                    value={project.name}
-                    onChange={(value) =>
-                      updateProjectEntry(project.id, { name: value })
-                    }
-                    placeholder="Project Name"
-                  />
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                    <EditableText
-                      value={project.technologies.join(", ")}
-                      onChange={(value) =>
-                        updateProjectEntry(project.id, {
-                          technologies: parseCommaList(value),
-                        })
-                      }
-                      placeholder="Technologies"
-                    />
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-                    onClick={() => removeProjectEntry(project.id)}
-                    aria-label="Remove project"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-              </div>
+      </div>
+      <EditableText
+        value={project.description}
+        onChange={(value) =>
+          updateProjectEntry(project.id, { description: value })
+        }
+        placeholder="Project description"
+        className="text-sm text-gray-700 dark:text-gray-300"
+        multiline
+      />
+      {project.bullets.length > 0 && (
+        <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
+          {project.bullets.map((bullet, idx) => (
+            <li key={idx} className="group/bullet">
               <EditableText
-                value={project.description}
+                value={bullet}
                 onChange={(value) =>
-                  updateProjectEntry(project.id, { description: value })
+                  updateProjectBullet(project.id, idx, value)
                 }
-                placeholder="Project description"
-                className="text-sm text-gray-700 dark:text-gray-300"
-                multiline
+                placeholder="Project impact..."
               />
-              {project.bullets.length > 0 && (
-                <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
-                  {project.bullets.map((bullet, idx) => (
-                    <li key={idx} className="group/bullet">
-                      <EditableText
-                        value={bullet}
-                        onChange={(value) =>
-                          updateProjectBullet(project.id, idx, value)
-                        }
-                        placeholder="Project impact..."
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="ml-1 h-4 w-4 text-muted-foreground opacity-0 transition group-hover/bullet:opacity-100 hover:text-destructive"
-                        onClick={() => removeProjectBullet(project.id, idx)}
-                        aria-label="Remove bullet"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
               <Button
                 variant="ghost"
-                size="sm"
-                className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-                onClick={() => addProjectBullet(project.id)}
+                size="icon"
+                className="ml-1 h-4 w-4 text-muted-foreground opacity-0 transition group-hover/bullet:opacity-100 hover:text-destructive"
+                onClick={() => removeProjectBullet(project.id, idx)}
+                aria-label="Remove bullet"
               >
-                <Plus className="h-3 w-3" />
-                Add Bullet
+                <Trash2 className="h-3 w-3" />
               </Button>
-            </div>
+            </li>
           ))}
-        </div>
-      </div>
-    );
-  };
+        </ul>
+      )}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+        onClick={() => addProjectBullet(project.id)}
+      >
+        <Plus className="h-3 w-3" />
+        Add Bullet
+      </Button>
+    </div>
+  );
 
-  const renderEducation = () => {
-    if (!sectionVisibility.education || !hasEducation) {
-      return sectionVisibility.education ? (
-        <div>
-          <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
-            <h2 className="text-sm font-bold uppercase tracking-wide">
-              Education
-            </h2>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-              onClick={addEducationEntry}
-            >
-              <Plus className="h-3 w-3" />
-              Add Education
-            </Button>
-          </div>
-          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
-            Add education entries using the button above.
-          </p>
-        </div>
-      ) : null;
-    }
+  const renderProjectsEmpty = () => (
+    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+      Add project entries using the button above.
+    </p>
+  );
+
+  const renderEducationHeader = () =>
+    renderSectionHeader(
+      "Education",
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+        onClick={addEducationEntry}
+      >
+        <Plus className="h-3 w-3" />
+        Add Education
+      </Button>
+    );
+
+  const renderEducationItem = (entry: ResumeData["education"][number]) => {
+    const primaryField =
+      educationOrder === "degree-first" ? "degree" : "institution";
+    const secondaryField =
+      educationOrder === "degree-first" ? "institution" : "degree";
+    const primaryFallback =
+      educationOrder === "degree-first"
+        ? "Degree"
+        : "University Name";
+    const secondaryFallback =
+      educationOrder === "degree-first"
+        ? "University Name"
+        : "Degree";
 
     return (
-      <div>
-        <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
-          <h2 className="text-sm font-bold uppercase tracking-wide">
-            Education
-          </h2>
+      <div className="group space-y-1">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            <EditableText
+              value={entry[primaryField] ?? ""}
+              onChange={(value) =>
+                updateEducationEntry(entry.id, {
+                  [primaryField]: value,
+                } as Partial<ResumeData["education"][number]>)
+              }
+              placeholder={primaryFallback}
+            />
+          </p>
           <Button
             variant="ghost"
-            size="sm"
-            className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-            onClick={addEducationEntry}
+            size="icon"
+            className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+            onClick={() => removeEducationEntry(entry.id)}
+            aria-label="Remove education"
           >
-            <Plus className="h-3 w-3" />
-            Add Education
+            <Trash2 className="h-3 w-3" />
           </Button>
         </div>
-        <div className="mt-2 space-y-3">
-          {education.map((entry) => {
-            const primaryField =
-              educationOrder === "degree-first" ? "degree" : "institution";
-            const secondaryField =
-              educationOrder === "degree-first" ? "institution" : "degree";
-            const primaryFallback =
-              educationOrder === "degree-first"
-                ? "Degree"
-                : "University Name";
-            const secondaryFallback =
-              educationOrder === "degree-first"
-                ? "University Name"
-                : "Degree";
-
-            return (
-              <div key={entry.id} className="group space-y-1">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                    <EditableText
-                      value={entry[primaryField] ?? ""}
-                      onChange={(value) =>
-                        updateEducationEntry(entry.id, {
-                          [primaryField]: value,
-                        } as Partial<ResumeData["education"][number]>)
-                      }
-                      placeholder={primaryFallback}
-                    />
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-                    onClick={() => removeEducationEntry(entry.id)}
-                    aria-label="Remove education"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-                <p className="text-sm text-gray-700 dark:text-gray-300">
-                  <EditableText
-                    value={entry[secondaryField] ?? ""}
-                    onChange={(value) =>
-                      updateEducationEntry(entry.id, {
-                        [secondaryField]: value,
-                      } as Partial<ResumeData["education"][number]>)
-                    }
-                    placeholder={secondaryFallback}
-                  />
-                  <span className="text-gray-400"> | </span>
-                  <EditableText
-                    value={entry.location ?? ""}
-                    onChange={(value) =>
-                      updateEducationEntry(entry.id, { location: value })
-                    }
-                    placeholder="Location"
-                  />
-                  {entry.gpa && (
-                    <>
-                      <span className="text-gray-400"> | </span>
-                      <span className="inline-flex items-baseline gap-1">
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
-                          GPA:
-                        </span>
-                        <EditableText
-                          value={entry.gpa}
-                          onChange={(value) =>
-                            updateEducationEntry(entry.id, { gpa: value })
-                          }
-                          placeholder="GPA"
-                        />
-                      </span>
-                    </>
-                  )}
-                </p>
-              </div>
-            );
-          })}
-        </div>
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          <EditableText
+            value={entry[secondaryField] ?? ""}
+            onChange={(value) =>
+              updateEducationEntry(entry.id, {
+                [secondaryField]: value,
+              } as Partial<ResumeData["education"][number]>)
+            }
+            placeholder={secondaryFallback}
+          />
+          <span className="text-gray-400"> | </span>
+          <EditableText
+            value={entry.location ?? ""}
+            onChange={(value) =>
+              updateEducationEntry(entry.id, { location: value })
+            }
+            placeholder="Location"
+          />
+          {entry.gpa && (
+            <>
+              <span className="text-gray-400"> | </span>
+              <span className="inline-flex items-baseline gap-1">
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  GPA:
+                </span>
+                <EditableText
+                  value={entry.gpa}
+                  onChange={(value) =>
+                    updateEducationEntry(entry.id, { gpa: value })
+                  }
+                  placeholder="GPA"
+                />
+              </span>
+            </>
+          )}
+        </p>
       </div>
     );
   };
 
-  const renderSkills = () => {
-    if (!sectionVisibility.skills) return null;
+  const renderEducationEmpty = () => (
+    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+      Add education entries using the button above.
+    </p>
+  );
+
+  const renderSkillsHeader = () =>
+    renderSectionHeader(
+      "Skills",
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+          onClick={() => addSkill("")}
+        >
+          <Plus className="h-3 w-3" />
+          Add Skill
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+          onClick={() => addSkill("New Category")}
+        >
+          <Plus className="h-3 w-3" />
+          Add Group
+        </Button>
+      </div>
+    );
+
+  const renderSkillsContent = () => {
     const renderSkillItem = (skill: SkillEntry) => (
       <span className="inline-flex items-center gap-1 group/skill">
         <EditableText
@@ -835,106 +806,452 @@ export function ResumeViewer({
     );
 
     return (
-      <div>
-        <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
-          <h2 className="text-sm font-bold uppercase tracking-wide">Skills</h2>
-          <div className="flex items-center gap-2">
+      <div className="space-y-1">
+        {Object.entries(groupedSkills).map(
+          ([category, categorySkills]) => (
+            <div
+              key={category}
+              className="flex items-start justify-between gap-2"
+            >
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                <span className="font-semibold">
+                  <EditableText
+                    value={category}
+                    onChange={(value) =>
+                      updateSkillCategory(category, value)
+                    }
+                    placeholder="Category"
+                  />
+                  :
+                </span>{" "}
+                {categorySkills.map((skill, index) => (
+                  <Fragment key={skill.id}>
+                    {renderSkillItem(skill)}
+                    {index < categorySkills.length - 1 && ", "}
+                  </Fragment>
+                ))}
+              </p>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                onClick={() => addSkill(category)}
+                aria-label={`Add skill to ${category}`}
+              >
+                <Plus className="h-3 w-3" />
+              </Button>
+            </div>
+          )
+        )}
+        {ungroupedSkills.length > 0 && (
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm text-gray-700 dark:text-gray-300">
+              {ungroupedSkills.map((skill, index) => (
+                <Fragment key={skill.id}>
+                  {renderSkillItem(skill)}
+                  {index < ungroupedSkills.length - 1 && ", "}
+                </Fragment>
+              ))}
+            </p>
             <Button
               variant="ghost"
-              size="sm"
-              className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
               onClick={() => addSkill("")}
+              aria-label="Add skill"
             >
               <Plus className="h-3 w-3" />
-              Add Skill
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-              onClick={() => addSkill("New Category")}
-            >
-              <Plus className="h-3 w-3" />
-              Add Group
             </Button>
           </div>
-        </div>
-        {hasSkills ? (
-          <div className="mt-2 space-y-1">
-            {Object.entries(groupedSkills).map(
-              ([category, categorySkills]) => (
-                <div
-                  key={category}
-                  className="flex items-start justify-between gap-2"
-                >
-                  <p className="text-sm text-gray-700 dark:text-gray-300">
-                    <span className="font-semibold">
-                      <EditableText
-                        value={category}
-                        onChange={(value) =>
-                          updateSkillCategory(category, value)
-                        }
-                        placeholder="Category"
-                      />
-                      :
-                    </span>{" "}
-                    {categorySkills.map((skill, index) => (
-                      <Fragment key={skill.id}>
-                        {renderSkillItem(skill)}
-                        {index < categorySkills.length - 1 && ", "}
-                      </Fragment>
-                    ))}
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                    onClick={() => addSkill(category)}
-                    aria-label={`Add skill to ${category}`}
-                  >
-                    <Plus className="h-3 w-3" />
-                  </Button>
-                </div>
-              )
-            )}
-            {ungroupedSkills.length > 0 && (
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm text-gray-700 dark:text-gray-300">
-                  {ungroupedSkills.map((skill, index) => (
-                    <Fragment key={skill.id}>
-                      {renderSkillItem(skill)}
-                      {index < ungroupedSkills.length - 1 && ", "}
-                    </Fragment>
-                  ))}
-                </p>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  onClick={() => addSkill("")}
-                  aria-label="Add skill"
-                >
-                  <Plus className="h-3 w-3" />
-                </Button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
-            Add skills using the buttons above.
-          </p>
         )}
       </div>
     );
   };
 
-  const sectionRenderers: Record<SectionKey, () => JSX.Element | null> = {
-    summary: renderSummary,
-    experience: renderExperience,
-    projects: renderProjects,
-    education: renderEducation,
-    skills: renderSkills,
+  const renderSkillsEmpty = () => (
+    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+      Add skills using the buttons above.
+    </p>
+  );
+
+  // Pagination hooks for resume and cover letter
+  const resumePagination = usePagination({
+    paperSize: pageSettings.paperSize,
+    margins: pageSettings.margins,
+    elementGap: 16, // space-y-4 = 1rem = 16px
+  });
+
+  const coverLetterPagination = usePagination({
+    paperSize: pageSettings.paperSize,
+    margins: pageSettings.margins,
+    elementGap: 24, // space-y-6 = 1.5rem = 24px
+  });
+
+  // Build the list of measurable elements for the resume (granular for proper pagination)
+  const resumeElements = useMemo(() => {
+    const elements: Array<{ id: string; isHeader: boolean; render: () => ReactNode }> = [];
+
+    // Header is always first
+    elements.push({
+      id: "header",
+      isHeader: false,
+      render: () => (
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            <EditableText
+              value={metadata.fullName}
+              onChange={(fullName) => updateMetadata({ fullName })}
+              placeholder="Your Name"
+            />
+          </h1>
+          <p className="mt-0.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <EditableText
+              value={metadata.subtitle}
+              onChange={(subtitle) => updateMetadata({ subtitle })}
+              placeholder="Professional Title"
+            />
+          </p>
+          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+            <EditableText
+              value={metadata.contactInfo.email}
+              onChange={(email) => updateContactInfo({ email })}
+              placeholder="email@example.com"
+            />
+            <span className="text-gray-400"> | </span>
+            <EditableText
+              value={metadata.contactInfo.phone}
+              onChange={(phone) => updateContactInfo({ phone })}
+              placeholder="(555) 123-4567"
+            />
+            <span className="text-gray-400"> | </span>
+            <EditableText
+              value={metadata.contactInfo.location}
+              onChange={(location) => updateContactInfo({ location })}
+              placeholder="City, State"
+            />
+          </p>
+        </div>
+      ),
+    });
+
+    // Add sections in order with granular elements
+    for (const section of orderedSections) {
+      if (section === "summary" && sectionVisibility.summary) {
+        // Summary: header + content
+        elements.push({
+          id: "summary-header",
+          isHeader: true,
+          render: renderSummaryHeader,
+        });
+        elements.push({
+          id: "summary-content",
+          isHeader: false,
+          render: renderSummaryContent,
+        });
+      } else if (section === "experience" && sectionVisibility.experience) {
+        // Experience: header + individual items
+        elements.push({
+          id: "experience-header",
+          isHeader: true,
+          render: renderExperienceHeader,
+        });
+        if (experience.length === 0) {
+          elements.push({
+            id: "experience-empty",
+            isHeader: false,
+            render: renderExperienceEmpty,
+          });
+        } else {
+          for (const entry of experience) {
+            elements.push({
+              id: `experience-${entry.id}`,
+              isHeader: false,
+              render: () => renderExperienceItem(entry),
+            });
+          }
+        }
+      } else if (section === "projects" && sectionVisibility.projects) {
+        // Projects: header + individual items
+        elements.push({
+          id: "projects-header",
+          isHeader: true,
+          render: renderProjectsHeader,
+        });
+        if (projects.length === 0) {
+          elements.push({
+            id: "projects-empty",
+            isHeader: false,
+            render: renderProjectsEmpty,
+          });
+        } else {
+          for (const project of projects) {
+            elements.push({
+              id: `project-${project.id}`,
+              isHeader: false,
+              render: () => renderProjectItem(project),
+            });
+          }
+        }
+      } else if (section === "education" && sectionVisibility.education) {
+        // Education: header + individual items
+        elements.push({
+          id: "education-header",
+          isHeader: true,
+          render: renderEducationHeader,
+        });
+        if (education.length === 0) {
+          elements.push({
+            id: "education-empty",
+            isHeader: false,
+            render: renderEducationEmpty,
+          });
+        } else {
+          for (const entry of education) {
+            elements.push({
+              id: `education-${entry.id}`,
+              isHeader: false,
+              render: () => renderEducationItem(entry),
+            });
+          }
+        }
+      } else if (section === "skills" && sectionVisibility.skills) {
+        // Skills: header + content (keep as single element since skills are compact)
+        elements.push({
+          id: "skills-header",
+          isHeader: true,
+          render: renderSkillsHeader,
+        });
+        if (skills.length === 0) {
+          elements.push({
+            id: "skills-empty",
+            isHeader: false,
+            render: renderSkillsEmpty,
+          });
+        } else {
+          elements.push({
+            id: "skills-content",
+            isHeader: false,
+            render: renderSkillsContent,
+          });
+        }
+      }
+    }
+
+    return elements;
+  }, [
+    metadata,
+    orderedSections,
+    sectionVisibility,
+    experience,
+    projects,
+    education,
+    skills,
+    layoutPreferences,
+    groupedSkills,
+    ungroupedSkills,
+    experienceOrder,
+    educationOrder,
+  ]);
+
+  // Build cover letter elements
+  const coverLetterElements = useMemo(() => {
+    const elements: Array<{ id: string; isHeader: boolean; render: () => ReactNode }> = [];
+
+    elements.push({
+      id: "cl-sender",
+      isHeader: false,
+      render: () => (
+        <div>
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            <EditableText
+              value={metadata.fullName}
+              onChange={(fullName) => updateMetadata({ fullName })}
+              placeholder="Your Name"
+            />
+            <br />
+            <EditableText
+              value={metadata.contactInfo.location}
+              onChange={(location) => updateContactInfo({ location })}
+              placeholder="Your Address"
+            />
+            <br />
+            <EditableText
+              value={metadata.contactInfo.email}
+              onChange={(email) => updateContactInfo({ email })}
+              placeholder="email@example.com"
+            />
+          </p>
+        </div>
+      ),
+    });
+
+    elements.push({
+      id: "cl-date",
+      isHeader: false,
+      render: () => (
+        <div>
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            <EditableText
+              value={coverLetter.date}
+              onChange={(date) => updateCoverLetter({ date })}
+              placeholder={todayFormatted}
+            />
+          </p>
+        </div>
+      ),
+    });
+
+    elements.push({
+      id: "cl-recipient",
+      isHeader: false,
+      render: () => (
+        <div>
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            <EditableText
+              value={coverLetter.hiringManager}
+              onChange={(hiringManager) => updateCoverLetter({ hiringManager })}
+              placeholder="Hiring Manager"
+            />
+            <br />
+            <EditableText
+              value={coverLetter.companyAddress}
+              onChange={(companyAddress) => updateCoverLetter({ companyAddress })}
+              placeholder={"Company Name\nCompany Address\nCity, State ZIP"}
+              multiline
+            />
+          </p>
+        </div>
+      ),
+    });
+
+    elements.push({
+      id: "cl-body",
+      isHeader: false,
+      render: () => (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            Dear{" "}
+            <EditableText
+              value={coverLetter.hiringManager}
+              onChange={(hiringManager) => updateCoverLetter({ hiringManager })}
+              placeholder="Hiring Manager"
+            />
+            ,
+          </p>
+          <EditableText
+            value={coverLetter.body}
+            onChange={(body) => updateCoverLetter({ body })}
+            placeholder="Your cover letter content will appear here. Use the Cover tab in the editor to write your letter."
+            className="text-sm leading-relaxed text-gray-700 dark:text-gray-300"
+            multiline
+          />
+          <p className="text-sm text-gray-700 dark:text-gray-300">
+            <EditableText
+              value={coverLetter.sendoff}
+              onChange={(sendoff) => updateCoverLetter({ sendoff })}
+              placeholder="Best Regards,"
+            />
+            <br />
+            <br />
+            <EditableText
+              value={metadata.fullName}
+              onChange={(fullName) => updateMetadata({ fullName })}
+              placeholder="Your Name"
+            />
+          </p>
+        </div>
+      ),
+    });
+
+    return elements;
+  }, [metadata, coverLetter, todayFormatted]);
+
+  // Register elements with pagination hooks
+  useEffect(() => {
+    resumePagination.setElements(
+      resumeElements.map((e) => ({ id: e.id, isHeader: e.isHeader }))
+    );
+  }, [resumeElements, resumePagination.setElements]);
+
+  useEffect(() => {
+    coverLetterPagination.setElements(
+      coverLetterElements.map((e) => ({ id: e.id, isHeader: e.isHeader }))
+    );
+  }, [coverLetterElements, coverLetterPagination.setElements]);
+
+  // Map element IDs to their page assignments, defaulting to page 0 for unmeasured elements
+  const resumeElementPages = useMemo(() => {
+    const map = new Map<string, number>();
+    // First, assign all elements to page 0 as default
+    for (const el of resumeElements) {
+      map.set(el.id, 0);
+    }
+    // Then, update with actual page assignments from pagination
+    for (const page of resumePagination.pages) {
+      for (const el of page.elements) {
+        map.set(el.id, page.pageIndex);
+      }
+    }
+    return map;
+  }, [resumePagination.pages, resumeElements]);
+
+  const coverLetterElementPages = useMemo(() => {
+    const map = new Map<string, number>();
+    // First, assign all elements to page 0 as default
+    for (const el of coverLetterElements) {
+      map.set(el.id, 0);
+    }
+    // Then, update with actual page assignments from pagination
+    for (const page of coverLetterPagination.pages) {
+      for (const el of page.elements) {
+        map.set(el.id, page.pageIndex);
+      }
+    }
+    return map;
+  }, [coverLetterPagination.pages, coverLetterElements]);
+
+  // Calculate paper height in pixels for page containers
+  const getPageHeightStyle = (pageDimensions: { pageHeightPx: number } | null) => {
+    if (!pageDimensions) {
+      const { width, height } = PAPER_DIMENSIONS[pageSettings.paperSize];
+      return { aspectRatio: `${width} / ${height}` };
+    }
+    return { height: `${pageDimensions.pageHeightPx}px` };
   };
+
+  // Get unique page indices (ensure at least page 0 exists)
+  const resumePageIndices = useMemo(() => {
+    const indices = new Set<number>([0]);
+    for (const page of resumePagination.pages) {
+      indices.add(page.pageIndex);
+    }
+    return Array.from(indices).sort((a, b) => a - b);
+  }, [resumePagination.pages]);
+
+  const coverLetterPageIndices = useMemo(() => {
+    const indices = new Set<number>([0]);
+    for (const page of coverLetterPagination.pages) {
+      indices.add(page.pageIndex);
+    }
+    return Array.from(indices).sort((a, b) => a - b);
+  }, [coverLetterPagination.pages]);
+
+  // Pre-create ref callbacks to satisfy eslint
+  const resumeRefCallbacks = useMemo(() => {
+    const callbacks = new Map<string, (el: HTMLElement | null) => void>();
+    for (const el of resumeElements) {
+      callbacks.set(el.id, resumePagination.measureRef(el.id));
+    }
+    return callbacks;
+  }, [resumeElements, resumePagination.measureRef]);
+
+  const coverLetterRefCallbacks = useMemo(() => {
+    const callbacks = new Map<string, (el: HTMLElement | null) => void>();
+    for (const el of coverLetterElements) {
+      callbacks.set(el.id, coverLetterPagination.measureRef(el.id));
+    }
+    return callbacks;
+  }, [coverLetterElements, coverLetterPagination.measureRef]);
 
   return (
     <div className="flex h-full flex-col">
@@ -959,52 +1276,34 @@ export function ResumeViewer({
         <ScrollArea className="flex-1">
           <div className="flex justify-center p-8">
             <TabsContent value="resume" className="mt-0 w-full max-w-[612px]">
-              <div className="document-paper rounded-sm" style={paperStyle}>
-                <div className="space-y-4">
-                  {/* Header */}
-                  <div className="text-center">
-                    <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                      <EditableText
-                        value={metadata.fullName}
-                        onChange={(fullName) => updateMetadata({ fullName })}
-                        placeholder="Your Name"
-                      />
-                    </h1>
-                    <p className="mt-0.5 text-sm font-medium text-gray-700 dark:text-gray-300">
-                      <EditableText
-                        value={metadata.subtitle}
-                        onChange={(subtitle) => updateMetadata({ subtitle })}
-                        placeholder="Professional Title"
-                      />
-                    </p>
-                    <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                      <EditableText
-                        value={metadata.contactInfo.email}
-                        onChange={(email) => updateContactInfo({ email })}
-                        placeholder="email@example.com"
-                      />
-                      <span className="text-gray-400"> | </span>
-                      <EditableText
-                        value={metadata.contactInfo.phone}
-                        onChange={(phone) => updateContactInfo({ phone })}
-                        placeholder="(555) 123-4567"
-                      />
-                      <span className="text-gray-400"> | </span>
-                      <EditableText
-                        value={metadata.contactInfo.location}
-                        onChange={(location) => updateContactInfo({ location })}
-                        placeholder="City, State"
-                      />
-                    </p>
+              <div
+                ref={resumePagination.containerRef}
+                className="resume-pages flex flex-col gap-8"
+              >
+                {/* eslint-disable-next-line react-hooks/refs */}
+                {resumePageIndices.map((pageIndex) => (
+                  <div
+                    key={pageIndex}
+                    className="document-paper rounded-sm overflow-hidden"
+                    style={{
+                      ...paperStyle,
+                      ...getPageHeightStyle(resumePagination.pageDimensions),
+                    }}
+                  >
+                    <div className="space-y-4">
+                      {resumeElements
+                        .filter((el) => resumeElementPages.get(el.id) === pageIndex)
+                        .map((element) => (
+                          <div
+                            key={element.id}
+                            ref={resumeRefCallbacks.get(element.id)}
+                          >
+                            {element.render()}
+                          </div>
+                        ))}
+                    </div>
                   </div>
-
-                  {orderedSections.map((section) => {
-                    const content = sectionRenderers[section]();
-                    return content ? (
-                      <Fragment key={section}>{content}</Fragment>
-                    ) : null;
-                  })}
-                </div>
+                ))}
               </div>
             </TabsContent>
 
@@ -1012,106 +1311,34 @@ export function ResumeViewer({
               value="cover-letter"
               className="mt-0 w-full max-w-[612px]"
             >
-              <div className="document-paper rounded-sm" style={paperStyle}>
-                <div className="space-y-6">
-                  {/* Sender */}
-                  <div>
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
-                      <EditableText
-                        value={metadata.fullName}
-                        onChange={(fullName) => updateMetadata({ fullName })}
-                        placeholder="Your Name"
-                      />
-                      <br />
-                      <EditableText
-                        value={metadata.contactInfo.location}
-                        onChange={(location) =>
-                          updateContactInfo({ location })
-                        }
-                        placeholder="Your Address"
-                      />
-                      <br />
-                      <EditableText
-                        value={metadata.contactInfo.email}
-                        onChange={(email) => updateContactInfo({ email })}
-                        placeholder="email@example.com"
-                      />
-                    </p>
+              <div
+                ref={coverLetterPagination.containerRef}
+                className="cover-letter-pages flex flex-col gap-8"
+              >
+                {/* eslint-disable-next-line react-hooks/refs */}
+                {coverLetterPageIndices.map((pageIndex) => (
+                  <div
+                    key={pageIndex}
+                    className="document-paper rounded-sm overflow-hidden"
+                    style={{
+                      ...paperStyle,
+                      ...getPageHeightStyle(coverLetterPagination.pageDimensions),
+                    }}
+                  >
+                    <div className="space-y-6">
+                      {coverLetterElements
+                        .filter((el) => coverLetterElementPages.get(el.id) === pageIndex)
+                        .map((element) => (
+                          <div
+                            key={element.id}
+                            ref={coverLetterRefCallbacks.get(element.id)}
+                          >
+                            {element.render()}
+                          </div>
+                        ))}
+                    </div>
                   </div>
-
-                  {/* Date */}
-                  <div>
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
-                      <EditableText
-                        value={coverLetter.date}
-                        onChange={(date) => updateCoverLetter({ date })}
-                        placeholder={todayFormatted}
-                      />
-                    </p>
-                  </div>
-
-                  {/* Recipient */}
-                  <div>
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
-                      <EditableText
-                        value={coverLetter.hiringManager}
-                        onChange={(hiringManager) =>
-                          updateCoverLetter({ hiringManager })
-                        }
-                        placeholder="Hiring Manager"
-                      />
-                      <br />
-                      <EditableText
-                        value={coverLetter.companyAddress}
-                        onChange={(companyAddress) =>
-                          updateCoverLetter({ companyAddress })
-                        }
-                        placeholder={
-                          "Company Name\nCompany Address\nCity, State ZIP"
-                        }
-                        multiline
-                      />
-                    </p>
-                  </div>
-
-                  {/* Greeting + body + sign-off */}
-                  <div className="space-y-4">
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
-                      Dear{" "}
-                      <EditableText
-                        value={coverLetter.hiringManager}
-                        onChange={(hiringManager) =>
-                          updateCoverLetter({ hiringManager })
-                        }
-                        placeholder="Hiring Manager"
-                      />
-                      ,
-                    </p>
-                    <EditableText
-                      value={coverLetter.body}
-                      onChange={(body) => updateCoverLetter({ body })}
-                      placeholder={
-                        "Your cover letter content will appear here. Use the Cover tab in the editor to write your letter."
-                      }
-                      className="text-sm leading-relaxed text-gray-700 dark:text-gray-300"
-                      multiline
-                    />
-                    <p className="text-sm text-gray-700 dark:text-gray-300">
-                      <EditableText
-                        value={coverLetter.sendoff}
-                        onChange={(sendoff) => updateCoverLetter({ sendoff })}
-                        placeholder="Best Regards,"
-                      />
-                      <br />
-                      <br />
-                      <EditableText
-                        value={metadata.fullName}
-                        onChange={(fullName) => updateMetadata({ fullName })}
-                        placeholder="Your Name"
-                      />
-                    </p>
-                  </div>
-                </div>
+                ))}
               </div>
             </TabsContent>
           </div>

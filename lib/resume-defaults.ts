@@ -36,9 +36,13 @@ export const DEFAULT_SECTION_VISIBILITY = {
   skills: true,
 };
 
-export const DEFAULT_LAYOUT_PREFERENCES = {
-  experienceOrder: "title-first" as const,
-  educationOrder: "degree-first" as const,
+export const DEFAULT_LAYOUT_PREFERENCES: {
+  experienceOrder: "title-first" | "company-first";
+  educationOrder: "degree-first" | "institution-first";
+  sectionOrder: ("summary" | "experience" | "projects" | "education" | "skills")[];
+} = {
+  experienceOrder: "title-first",
+  educationOrder: "degree-first",
   sectionOrder: ["summary", "experience", "projects", "education", "skills"],
 };
 

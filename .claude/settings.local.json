@@ -11,7 +11,8 @@
       "Bash(pnpm rebuild:*)",
       "Bash(pnpm db:push:*)",
       "Bash(pnpm build:*)",
-      "Bash(pnpm tsc:*)"
+      "Bash(pnpm tsc:*)",
+      "Bash(pnpm lint:*)"
     ]
   }
 }
