@@ -25,6 +25,9 @@ export function ResumeEditorPanel({
   const layoutPreferences = {
     ...DEFAULT_LAYOUT_PREFERENCES,
     ...resumeData.layoutPreferences,
+    contactOrder:
+      resumeData.layoutPreferences?.contactOrder ??
+      DEFAULT_LAYOUT_PREFERENCES.contactOrder,
     headerAlignment: {
       ...DEFAULT_LAYOUT_PREFERENCES.headerAlignment,
       ...resumeData.layoutPreferences?.headerAlignment,
@@ -103,8 +106,18 @@ export function ResumeEditorPanel({
               <MetadataEditor
                 metadata={resumeData.metadata}
                 headerAlignment={layoutPreferences.headerAlignment}
+                contactOrder={layoutPreferences.contactOrder}
                 onChange={(metadata) =>
                   onResumeUpdate({ ...resumeData, metadata })
+                }
+                onContactOrderChange={(contactOrder) =>
+                  onResumeUpdate({
+                    ...resumeData,
+                    layoutPreferences: {
+                      ...layoutPreferences,
+                      contactOrder,
+                    },
+                  })
                 }
                 onHeaderAlignmentChange={(headerAlignment) =>
                   onResumeUpdate({

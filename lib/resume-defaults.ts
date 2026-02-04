@@ -1,4 +1,11 @@
 export type PaperSize = "a4" | "letter";
+export type ContactFieldKey =
+  | "email"
+  | "phone"
+  | "location"
+  | "linkedin"
+  | "website"
+  | "github";
 
 export const PAPER_DIMENSIONS: Record<PaperSize, { width: number; height: number }> = {
   a4: { width: 210, height: 297 },
@@ -42,10 +49,20 @@ export const DEFAULT_HEADER_ALIGNMENT = {
   contact: "center",
 } as const;
 
+export const DEFAULT_CONTACT_ORDER: ContactFieldKey[] = [
+  "email",
+  "phone",
+  "location",
+  "linkedin",
+  "website",
+  "github",
+];
+
 export const DEFAULT_LAYOUT_PREFERENCES: {
   experienceOrder: "title-first" | "company-first";
   educationOrder: "degree-first" | "institution-first";
   sectionOrder: ("summary" | "experience" | "projects" | "education" | "skills")[];
+  contactOrder: ContactFieldKey[];
   headerAlignment: {
     name: "left" | "center" | "right";
     subtitle: "left" | "center" | "right";
@@ -55,6 +72,7 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
   experienceOrder: "title-first",
   educationOrder: "degree-first",
   sectionOrder: ["summary", "experience", "projects", "education", "skills"],
+  contactOrder: DEFAULT_CONTACT_ORDER,
   headerAlignment: DEFAULT_HEADER_ALIGNMENT,
 };
 

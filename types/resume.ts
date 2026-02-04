@@ -1,4 +1,11 @@
-import type { MarginPreset, PageMargins, PaperSize } from "@/lib/resume-defaults";
+import type {
+  ContactFieldKey,
+  MarginPreset,
+  PageMargins,
+  PaperSize,
+} from "@/lib/resume-defaults";
+
+export type { ContactFieldKey };
 
 export interface PageSettings {
   paperSize: PaperSize;
@@ -74,6 +81,7 @@ export interface LayoutPreferences {
   experienceOrder: ExperienceOrder;
   educationOrder: EducationOrder;
   sectionOrder: SectionKey[];
+  contactOrder: ContactFieldKey[];
   headerAlignment: HeaderAlignment;
 }
 

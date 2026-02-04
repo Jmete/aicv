@@ -1,25 +1,105 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { HeaderAlignment, ResumeMetadata, TextAlignment } from "@/types";
-import { AlignCenter, AlignLeft, AlignRight } from "lucide-react";
+import type {
+  ContactFieldKey,
+  HeaderAlignment,
+  ResumeMetadata,
+  TextAlignment,
+} from "@/types";
+import { AlignCenter, AlignLeft, AlignRight, GripVertical } from "lucide-react";
+
+const CONTACT_FIELDS = [
+  {
+    key: "email",
+    label: "Email",
+    placeholder: "john@example.com",
+    type: "email",
+    group: "contact",
+  },
+  {
+    key: "phone",
+    label: "Phone",
+    placeholder: "(555) 123-4567",
+    type: "tel",
+    group: "contact",
+  },
+  {
+    key: "location",
+    label: "Location",
+    placeholder: "San Francisco, CA",
+    type: "text",
+    group: "contact",
+  },
+  {
+    key: "linkedin",
+    label: "LinkedIn",
+    placeholder: "linkedin.com/in/johndoe",
+    type: "url",
+    group: "profile",
+  },
+  {
+    key: "website",
+    label: "Website",
+    placeholder: "johndoe.com",
+    type: "url",
+    group: "profile",
+  },
+  {
+    key: "github",
+    label: "GitHub",
+    placeholder: "github.com/johndoe",
+    type: "url",
+    group: "profile",
+  },
+] as const;
+
+type ContactFieldConfig = (typeof CONTACT_FIELDS)[number];
+type ContactGroup = ContactFieldConfig["group"];
 
 interface MetadataEditorProps {
   metadata: ResumeMetadata;
   headerAlignment: HeaderAlignment;
+  contactOrder: ContactFieldKey[];
   onChange: (metadata: ResumeMetadata) => void;
+  onContactOrderChange: (order: ContactFieldKey[]) => void;
   onHeaderAlignmentChange: (alignment: HeaderAlignment) => void;
 }
 
 export function MetadataEditor({
   metadata,
   headerAlignment,
+  contactOrder,
   onChange,
+  onContactOrderChange,
   onHeaderAlignmentChange,
 }: MetadataEditorProps) {
+  const [dragging, setDragging] = useState<ContactFieldKey | null>(null);
+
+  const orderedContactFields = useMemo(() => {
+    const fallback = CONTACT_FIELDS.map((field) => field.key);
+    const seen = new Set<ContactFieldKey>();
+    return [...contactOrder, ...fallback].filter((key) => {
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [contactOrder]);
+
+  const contactFieldMap = useMemo(() => {
+    return CONTACT_FIELDS.reduce(
+      (acc, field) => {
+        acc[field.key] = field;
+        return acc;
+      },
+      {} as Record<ContactFieldKey, ContactFieldConfig>
+    );
+  }, []);
+
   const handleFieldChange = (field: keyof ResumeMetadata, value: string) => {
     onChange({
       ...metadata,
@@ -28,7 +108,7 @@ export function MetadataEditor({
   };
 
   const handleContactChange = (
-    field: keyof ResumeMetadata["contactInfo"],
+    field: ContactFieldKey,
     value: string
   ) => {
     onChange({
@@ -48,6 +128,15 @@ export function MetadataEditor({
       ...headerAlignment,
       [field]: value,
     });
+  };
+
+  const handleContactDrop = (target: ContactFieldKey) => {
+    if (!dragging || dragging === target) return;
+    const next = orderedContactFields.filter((key) => key !== dragging);
+    const targetIndex = next.indexOf(target);
+    next.splice(targetIndex, 0, dragging);
+    onContactOrderChange(next);
+    setDragging(null);
   };
 
   const AlignmentRow = ({
@@ -123,45 +212,68 @@ export function MetadataEditor({
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="email" className="text-xs text-muted-foreground">
-              Email
-            </Label>
-            <Input
-              id="email"
-              type="email"
-              value={metadata.contactInfo.email}
-              onChange={(e) => handleContactChange("email", e.target.value)}
-              placeholder="john@example.com"
-              className="h-9"
-            />
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Drag rows to reorder how contact details appear in the header.
+          </p>
 
-          <div className="space-y-2">
-            <Label htmlFor="phone" className="text-xs text-muted-foreground">
-              Phone
-            </Label>
-            <Input
-              id="phone"
-              type="tel"
-              value={metadata.contactInfo.phone}
-              onChange={(e) => handleContactChange("phone", e.target.value)}
-              placeholder="(555) 123-4567"
-              className="h-9"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="location" className="text-xs text-muted-foreground">
-              Location
-            </Label>
-            <Input
-              id="location"
-              value={metadata.contactInfo.location}
-              onChange={(e) => handleContactChange("location", e.target.value)}
-              placeholder="San Francisco, CA"
-              className="h-9"
-            />
+          <div className="space-y-3">
+            {(() => {
+              const renderedGroups = new Set<ContactGroup>();
+              return orderedContactFields.map((key) => {
+                const field = contactFieldMap[key];
+                if (!field) return null;
+                const showGroupHeading = !renderedGroups.has(field.group);
+                if (showGroupHeading) {
+                  renderedGroups.add(field.group);
+                }
+                return (
+                  <div key={key} className="space-y-3">
+                    {showGroupHeading && (
+                      <div className="pt-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {field.group === "contact"
+                            ? "Contact Information"
+                            : "Online Profiles"}
+                        </p>
+                      </div>
+                    )}
+                    <div
+                      className="flex items-start gap-2 rounded-md border border-transparent px-1.5 py-1 transition-colors hover:border-border"
+                      draggable
+                      onDragStart={(event) => {
+                        setDragging(key);
+                        event.dataTransfer.effectAllowed = "move";
+                      }}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDragEnd={() => setDragging(null)}
+                      onDrop={() => handleContactDrop(key)}
+                    >
+                      <div className="pt-2 cursor-grab">
+                        <GripVertical className="h-4 w-4 text-muted-foreground/70" />
+                      </div>
+                      <div className="flex-1 space-y-2">
+                        <Label
+                          htmlFor={key}
+                          className="text-xs text-muted-foreground"
+                        >
+                          {field.label}
+                        </Label>
+                        <Input
+                          id={key}
+                          type={field.type}
+                          value={metadata.contactInfo[key] ?? ""}
+                          onChange={(e) =>
+                            handleContactChange(key, e.target.value)
+                          }
+                          placeholder={field.placeholder}
+                          className="h-9"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
           </div>
         </div>
       </div>
@@ -192,51 +304,6 @@ export function MetadataEditor({
             value={headerAlignment.contact}
             onValueChange={(value) => updateAlignment("contact", value)}
           />
-        </div>
-      </div>
-
-      <div className="space-y-4 rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-medium text-foreground">Online Profiles</h3>
-
-        <div className="space-y-3">
-          <div className="space-y-2">
-            <Label htmlFor="linkedin" className="text-xs text-muted-foreground">
-              LinkedIn
-            </Label>
-            <Input
-              id="linkedin"
-              value={metadata.contactInfo.linkedin ?? ""}
-              onChange={(e) => handleContactChange("linkedin", e.target.value)}
-              placeholder="linkedin.com/in/johndoe"
-              className="h-9"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="website" className="text-xs text-muted-foreground">
-              Website
-            </Label>
-            <Input
-              id="website"
-              value={metadata.contactInfo.website ?? ""}
-              onChange={(e) => handleContactChange("website", e.target.value)}
-              placeholder="johndoe.com"
-              className="h-9"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="github" className="text-xs text-muted-foreground">
-              GitHub
-            </Label>
-            <Input
-              id="github"
-              value={metadata.contactInfo.github ?? ""}
-              onChange={(e) => handleContactChange("github", e.target.value)}
-              placeholder="github.com/johndoe"
-              className="h-9"
-            />
-          </div>
         </div>
       </div>
 

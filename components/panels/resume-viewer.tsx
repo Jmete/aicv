@@ -15,6 +15,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DEFAULT_LAYOUT_PREFERENCES, PAPER_DIMENSIONS } from "@/lib/resume-defaults";
 import { cn } from "@/lib/utils";
 import type {
+  ContactFieldKey,
   HeaderAlignment,
   ResumeData,
   SectionKey,
@@ -23,6 +24,45 @@ import type {
 } from "@/types";
 import { AlignCenter, AlignLeft, AlignRight, Plus, Trash2 } from "lucide-react";
 import { usePagination } from "@/hooks/use-pagination";
+
+const CONTACT_FIELDS = [
+  {
+    key: "email",
+    placeholder: "email@example.com",
+    optional: false,
+    link: false,
+  },
+  {
+    key: "phone",
+    placeholder: "(555) 123-4567",
+    optional: false,
+    link: false,
+  },
+  {
+    key: "location",
+    placeholder: "City, State",
+    optional: false,
+    link: false,
+  },
+  {
+    key: "linkedin",
+    placeholder: "linkedin.com/in/username",
+    optional: true,
+    link: true,
+  },
+  {
+    key: "website",
+    placeholder: "yourwebsite.com",
+    optional: true,
+    link: true,
+  },
+  {
+    key: "github",
+    placeholder: "github.com/username",
+    optional: true,
+    link: true,
+  },
+] as const;
 
 interface ResumeViewerProps {
   resumeData: ResumeData;
@@ -128,6 +168,8 @@ export function ResumeViewer({
     () => ({
       ...DEFAULT_LAYOUT_PREFERENCES,
       ...layoutPreferences,
+      contactOrder:
+        layoutPreferences?.contactOrder ?? DEFAULT_LAYOUT_PREFERENCES.contactOrder,
       headerAlignment: {
         ...DEFAULT_LAYOUT_PREFERENCES.headerAlignment,
         ...layoutPreferences?.headerAlignment,
@@ -354,6 +396,35 @@ export function ResumeViewer({
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
+
+  const contactOrder = useMemo(() => {
+    const fallback = CONTACT_FIELDS.map((field) => field.key);
+    const seen = new Set<ContactFieldKey>();
+    return [...resolvedLayoutPreferences.contactOrder, ...fallback].filter(
+      (key) => {
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }
+    );
+  }, [resolvedLayoutPreferences.contactOrder]);
+
+  const contactFieldMap = useMemo(() => {
+    return CONTACT_FIELDS.reduce(
+      (acc, field) => {
+        acc[field.key] = field;
+        return acc;
+      },
+      {} as Record<ContactFieldKey, (typeof CONTACT_FIELDS)[number]>
+    );
+  }, []);
+
+  const normalizeProfileUrl = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+  };
 
   const headerAlignment = resolvedLayoutPreferences.headerAlignment;
 
@@ -1045,23 +1116,66 @@ export function ResumeViewer({
               updateHeaderAlignment("contact", value)
             )}
             <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              <EditableText
-                value={metadata.contactInfo.email}
-                onChange={(email) => updateContactInfo({ email })}
-                placeholder="email@example.com"
-              />
-              <span className="text-gray-400"> | </span>
-              <EditableText
-                value={metadata.contactInfo.phone}
-                onChange={(phone) => updateContactInfo({ phone })}
-                placeholder="(555) 123-4567"
-              />
-              <span className="text-gray-400"> | </span>
-              <EditableText
-                value={metadata.contactInfo.location}
-                onChange={(location) => updateContactInfo({ location })}
-                placeholder="City, State"
-              />
+              {(() => {
+                type ContactItem = {
+                  key: ContactFieldKey;
+                  value: string;
+                  placeholder: string;
+                  onChange: (value: string) => void;
+                  link: boolean;
+                  href: string;
+                };
+
+                const contactItems = contactOrder
+                  .map((key) => {
+                    const field = contactFieldMap[key];
+                    if (!field) return null;
+                    const value = metadata.contactInfo[key] ?? "";
+                    if (field.optional && value.trim().length === 0) {
+                      return null;
+                    }
+                    const onChange = (nextValue: string) =>
+                      updateContactInfo({ [key]: nextValue });
+                    return {
+                      key,
+                      value,
+                      placeholder: field.placeholder,
+                      onChange,
+                      link: field.link,
+                      href: field.link ? normalizeProfileUrl(value) : "",
+                    };
+                  })
+                  .filter((item): item is ContactItem => Boolean(item));
+
+                return contactItems.map((item, index) => (
+                  <Fragment key={item.key}>
+                    {item.link ? (
+                      <a
+                        href={item.href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:underline underline-offset-2"
+                        onClick={(event) => event.preventDefault()}
+                      >
+                        <EditableText
+                          value={item.value}
+                          onChange={item.onChange}
+                          placeholder={item.placeholder}
+                        />
+                      </a>
+                    ) : (
+                      <EditableText
+                        value={item.value}
+                        onChange={item.onChange}
+                        placeholder={item.placeholder}
+                      />
+                    )}
+                    {index < contactItems.length - 1 && (
+                      <span className="text-gray-400"> | </span>
+                    )}
+                  </Fragment>
+                ));
+              })()}
             </p>
           </div>
         </div>
@@ -1184,9 +1298,13 @@ export function ResumeViewer({
     ungroupedSkills,
     experienceOrder,
     educationOrder,
+    contactOrder,
+    contactFieldMap,
+    normalizeProfileUrl,
     headerAlignment,
     getAlignmentClass,
     renderInlineAlignment,
+    updateContactInfo,
     updateHeaderAlignment,
   ]);
 
