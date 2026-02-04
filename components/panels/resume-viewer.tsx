@@ -135,7 +135,9 @@ function EditableText({
       ref={ref}
       className={cn(
         "editable-field",
-        multiline ? "block whitespace-pre-line" : "inline-block",
+        multiline
+          ? "block whitespace-pre-line break-words"
+          : "inline-block max-w-full break-words align-baseline",
         className
       )}
       style={style}
@@ -682,7 +684,6 @@ export function ResumeViewer({
       experienceOrder === "title-first" ? "Job Title" : "Company Name";
     const secondaryFallback =
       experienceOrder === "title-first" ? "Company Name" : "Job Title";
-
     return (
       <div className="group space-y-1">
         <div className="flex items-start justify-between gap-2">
@@ -764,22 +765,33 @@ export function ResumeViewer({
         </div>
         {entry.bullets.length > 0 && (
           <ul
-            className="mt-1 list-inside list-disc text-gray-600 dark:text-gray-400"
+            className="mt-1 space-y-1 text-gray-600 dark:text-gray-400"
             style={fontSizeStyles.body}
+            role="list"
           >
             {entry.bullets.map((bullet, idx) => (
-              <li key={idx} className="group/bullet">
+              <li
+                key={idx}
+                className="group/bullet relative flex items-baseline gap-2"
+              >
+                <span
+                  aria-hidden
+                  className="self-baseline text-gray-600 dark:text-gray-400"
+                >
+                  •
+                </span>
                 <EditableText
                   value={bullet}
                   onChange={(value) =>
                     updateExperienceBullet(entry.id, idx, value)
                   }
                   placeholder="Describe your accomplishment..."
+                  className="min-w-0 flex-1 break-words self-baseline block"
                 />
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="ml-1 h-4 w-4 text-muted-foreground opacity-0 transition group-hover/bullet:opacity-100 hover:text-destructive"
+                  className="absolute right-0 top-[0.1em] h-4 w-4 text-muted-foreground opacity-0 transition pointer-events-none group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto hover:text-destructive"
                   onClick={() =>
                     removeExperienceBullet(entry.id, idx)
                   }
@@ -880,22 +892,33 @@ export function ResumeViewer({
       />
       {project.bullets.length > 0 && (
         <ul
-          className="mt-1 list-inside list-disc text-gray-600 dark:text-gray-400"
+          className="mt-1 space-y-1 text-gray-600 dark:text-gray-400"
           style={fontSizeStyles.body}
+          role="list"
         >
           {project.bullets.map((bullet, idx) => (
-            <li key={idx} className="group/bullet">
+            <li
+              key={idx}
+              className="group/bullet relative flex items-baseline gap-2"
+            >
+              <span
+                aria-hidden
+                className="self-baseline text-gray-600 dark:text-gray-400"
+              >
+                •
+              </span>
               <EditableText
                 value={bullet}
                 onChange={(value) =>
                   updateProjectBullet(project.id, idx, value)
                 }
                 placeholder="Project impact..."
+                className="min-w-0 flex-1 break-words self-baseline block"
               />
               <Button
                 variant="ghost"
                 size="icon"
-                className="ml-1 h-4 w-4 text-muted-foreground opacity-0 transition group-hover/bullet:opacity-100 hover:text-destructive"
+                className="absolute right-0 top-[0.1em] h-4 w-4 text-muted-foreground opacity-0 transition pointer-events-none group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto hover:text-destructive"
                 onClick={() => removeProjectBullet(project.id, idx)}
                 aria-label="Remove bullet"
               >
