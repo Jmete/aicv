@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm add:*)",
+      "Bash(pnpm dlx:*)",
+      "Bash(pnpm approve-builds:*)",
+      "Bash(pnpm config set:*)",
+      "Bash(pnpm install:*)",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(pnpm rebuild:*)",
+      "Bash(pnpm db:push:*)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm tsc:*)"
+    ]
+  }
+}

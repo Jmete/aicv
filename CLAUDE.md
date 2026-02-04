@@ -16,3 +16,5 @@
 
 - We are using PNPM
 - Make sure all relevant commands you issue use PNPM
+- Stop creating nul files when running commands
+- Don't run dev servers. I will run them for you if needed, and most of the time they are already running.
