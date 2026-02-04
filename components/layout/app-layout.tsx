@@ -93,7 +93,10 @@ export function AppLayout() {
 
         {/* Resume Viewer - flex-1 */}
         <div className="flex-1 overflow-hidden">
-          <ResumeViewer resumeData={resumeData} />
+          <ResumeViewer
+            resumeData={resumeData}
+            onResumeUpdate={handleResumeUpdate}
+          />
         </div>
 
         {/* Resume Editor Panel - 420px */}

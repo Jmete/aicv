@@ -1,16 +1,107 @@
 "use client";
 
-import { Fragment, useMemo } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { ClipboardEvent, KeyboardEvent } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PAPER_DIMENSIONS } from "@/lib/resume-defaults";
+import { cn } from "@/lib/utils";
 import type { ResumeData, SectionKey, SkillEntry } from "@/types";
 
 interface ResumeViewerProps {
   resumeData: ResumeData;
+  onResumeUpdate: (data: ResumeData) => void;
 }
 
-export function ResumeViewer({ resumeData }: ResumeViewerProps) {
+interface EditableTextProps {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+  multiline?: boolean;
+}
+
+const normalizeText = (value: string, multiline: boolean) => {
+  const normalized = value.replace(/\u00a0/g, " ");
+  return multiline ? normalized : normalized.replace(/\n+/g, " ");
+};
+
+function EditableText({
+  value,
+  onChange,
+  placeholder = "",
+  className,
+  multiline = false,
+}: EditableTextProps) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const normalizedValue = normalizeText(value, multiline);
+
+  useEffect(() => {
+    if (!ref.current || isEditing) return;
+    if (ref.current.textContent !== normalizedValue) {
+      ref.current.textContent = normalizedValue;
+    }
+  }, [normalizedValue, isEditing]);
+
+  const commit = () => {
+    if (!ref.current) return;
+    const nextValue = normalizeText(ref.current.textContent ?? "", multiline);
+    if (nextValue !== value) {
+      onChange(nextValue);
+    }
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLSpanElement>) => {
+    if (!multiline && event.key === "Enter") {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLSpanElement>) => {
+    event.preventDefault();
+    const text = event.clipboardData.getData("text/plain");
+    document.execCommand("insertText", false, normalizeText(text, multiline));
+  };
+
+  return (
+    <span
+      ref={ref}
+      className={cn(
+        "editable-field",
+        multiline ? "block whitespace-pre-line" : "inline-block",
+        className
+      )}
+      contentEditable
+      suppressContentEditableWarning
+      data-placeholder={placeholder}
+      onInput={commit}
+      onBlur={() => {
+        setIsEditing(false);
+        commit();
+      }}
+      onFocus={() => setIsEditing(true)}
+      onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
+      role="textbox"
+      aria-label={placeholder || "Editable text"}
+      tabIndex={0}
+      spellCheck
+    />
+  );
+}
+
+export function ResumeViewer({
+  resumeData,
+  onResumeUpdate,
+}: ResumeViewerProps) {
   const {
     pageSettings,
     metadata,
@@ -46,7 +137,7 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
     skills.forEach((skill) => {
       const name = skill.name.trim();
       const category = (skill.category || "").trim();
-      if (!name) return;
+      if (!name && !category) return;
 
       if (category) {
         if (!grouped[category]) {
@@ -60,15 +151,6 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
 
     return { groupedSkills: grouped, ungroupedSkills: ungrouped };
   }, [skills]);
-
-  // Build contact info string
-  const contactParts = useMemo(() => {
-    const parts: string[] = [];
-    if (metadata.contactInfo.email) parts.push(metadata.contactInfo.email);
-    if (metadata.contactInfo.phone) parts.push(metadata.contactInfo.phone);
-    if (metadata.contactInfo.location) parts.push(metadata.contactInfo.location);
-    return parts;
-  }, [metadata.contactInfo]);
 
   const todayFormatted = useMemo(
     () =>
@@ -103,6 +185,127 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
     });
   }, [layoutPreferences?.sectionOrder]);
 
+  const updateMetadata = (updates: Partial<ResumeData["metadata"]>) => {
+    onResumeUpdate({
+      ...resumeData,
+      metadata: {
+        ...metadata,
+        ...updates,
+      },
+    });
+  };
+
+  const updateContactInfo = (
+    updates: Partial<ResumeData["metadata"]["contactInfo"]>
+  ) => {
+    updateMetadata({
+      contactInfo: {
+        ...metadata.contactInfo,
+        ...updates,
+      },
+    });
+  };
+
+  const updateExperienceEntry = (
+    entryId: string,
+    updates: Partial<ResumeData["experience"][number]>
+  ) => {
+    onResumeUpdate({
+      ...resumeData,
+      experience: experience.map((entry) =>
+        entry.id === entryId ? { ...entry, ...updates } : entry
+      ),
+    });
+  };
+
+  const updateExperienceBullet = (
+    entryId: string,
+    bulletIndex: number,
+    value: string
+  ) => {
+    const entry = experience.find((item) => item.id === entryId);
+    if (!entry) return;
+    const nextBullets = [...entry.bullets];
+    nextBullets[bulletIndex] = value;
+    updateExperienceEntry(entryId, { bullets: nextBullets });
+  };
+
+  const updateProjectEntry = (
+    projectId: string,
+    updates: Partial<ResumeData["projects"][number]>
+  ) => {
+    onResumeUpdate({
+      ...resumeData,
+      projects: projects.map((project) =>
+        project.id === projectId ? { ...project, ...updates } : project
+      ),
+    });
+  };
+
+  const updateProjectBullet = (
+    projectId: string,
+    bulletIndex: number,
+    value: string
+  ) => {
+    const project = projects.find((item) => item.id === projectId);
+    if (!project) return;
+    const nextBullets = [...project.bullets];
+    nextBullets[bulletIndex] = value;
+    updateProjectEntry(projectId, { bullets: nextBullets });
+  };
+
+  const updateEducationEntry = (
+    entryId: string,
+    updates: Partial<ResumeData["education"][number]>
+  ) => {
+    onResumeUpdate({
+      ...resumeData,
+      education: education.map((entry) =>
+        entry.id === entryId ? { ...entry, ...updates } : entry
+      ),
+    });
+  };
+
+  const updateSkill = (
+    skillId: string,
+    updates: Partial<ResumeData["skills"][number]>
+  ) => {
+    onResumeUpdate({
+      ...resumeData,
+      skills: skills.map((skill) =>
+        skill.id === skillId ? { ...skill, ...updates } : skill
+      ),
+    });
+  };
+
+  const updateSkillCategory = (currentCategory: string, nextCategory: string) => {
+    const normalized = currentCategory.trim();
+    onResumeUpdate({
+      ...resumeData,
+      skills: skills.map((skill) =>
+        skill.category.trim() === normalized
+          ? { ...skill, category: nextCategory }
+          : skill
+      ),
+    });
+  };
+
+  const updateCoverLetter = (updates: Partial<ResumeData["coverLetter"]>) => {
+    onResumeUpdate({
+      ...resumeData,
+      coverLetter: {
+        ...coverLetter,
+        ...updates,
+      },
+    });
+  };
+
+  const parseCommaList = (value: string) =>
+    value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
   const renderSummary = () => {
     if (!sectionVisibility.summary) return null;
     return (
@@ -110,10 +313,13 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
         <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
           Summary
         </h2>
-        <p className="mt-2 text-sm leading-relaxed text-gray-700 dark:text-gray-300">
-          {metadata.summary ||
-            "Your professional summary will appear here..."}
-        </p>
+        <EditableText
+          value={metadata.summary}
+          onChange={(summary) => updateMetadata({ summary })}
+          placeholder="Your professional summary will appear here..."
+          className="mt-2 text-sm leading-relaxed text-gray-700 dark:text-gray-300"
+          multiline
+        />
       </div>
     );
   };
@@ -128,43 +334,78 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
           </h2>
           <div className="mt-2 space-y-3">
             {experience.map((entry) => {
-              const primary =
-                experienceOrder === "title-first"
-                  ? entry.jobTitle
-                  : entry.company;
-              const secondary =
-                experienceOrder === "title-first"
-                  ? entry.company
-                  : entry.jobTitle;
-              const secondaryLine = [secondary, entry.location]
-                .filter(Boolean)
-                .join(" | ");
+              const primaryField =
+                experienceOrder === "title-first" ? "jobTitle" : "company";
+              const secondaryField =
+                experienceOrder === "title-first" ? "company" : "jobTitle";
               const primaryFallback =
-                experienceOrder === "title-first"
-                  ? "Job Title"
-                  : "Company Name";
+                experienceOrder === "title-first" ? "Job Title" : "Company Name";
               const secondaryFallback =
-                experienceOrder === "title-first"
-                  ? "Company Name"
-                  : "Job Title";
+                experienceOrder === "title-first" ? "Company Name" : "Job Title";
 
               return (
                 <div key={entry.id}>
                   <div className="flex justify-between">
                     <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                      {primary || primaryFallback}
+                      <EditableText
+                        value={entry[primaryField]}
+                        onChange={(value) =>
+                          updateExperienceEntry(entry.id, {
+                            [primaryField]: value,
+                          } as Partial<ResumeData["experience"][number]>)
+                        }
+                        placeholder={primaryFallback}
+                      />
                     </span>
                     <span className="text-sm text-gray-600 dark:text-gray-400">
-                      {entry.startDate || "Start"} - {entry.endDate || "Present"}
+                      <EditableText
+                        value={entry.startDate}
+                        onChange={(value) =>
+                          updateExperienceEntry(entry.id, { startDate: value })
+                        }
+                        placeholder="Start"
+                      />
+                      <span className="mx-1">-</span>
+                      <EditableText
+                        value={entry.endDate}
+                        onChange={(value) =>
+                          updateExperienceEntry(entry.id, { endDate: value })
+                        }
+                        placeholder="Present"
+                      />
                     </span>
                   </div>
                   <p className="text-sm text-gray-700 dark:text-gray-300">
-                    {secondaryLine || secondaryFallback}
+                    <EditableText
+                      value={entry[secondaryField]}
+                      onChange={(value) =>
+                        updateExperienceEntry(entry.id, {
+                          [secondaryField]: value,
+                        } as Partial<ResumeData["experience"][number]>)
+                      }
+                      placeholder={secondaryFallback}
+                    />
+                    <span className="text-gray-400"> | </span>
+                    <EditableText
+                      value={entry.location}
+                      onChange={(value) =>
+                        updateExperienceEntry(entry.id, { location: value })
+                      }
+                      placeholder="Location"
+                    />
                   </p>
                   {entry.bullets.length > 0 && (
                     <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
                       {entry.bullets.map((bullet, idx) => (
-                        <li key={idx}>{bullet}</li>
+                        <li key={idx}>
+                          <EditableText
+                            value={bullet}
+                            onChange={(value) =>
+                              updateExperienceBullet(entry.id, idx, value)
+                            }
+                            placeholder="Describe your accomplishment..."
+                          />
+                        </li>
                       ))}
                     </ul>
                   )}
@@ -196,38 +437,56 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
           Projects
         </h2>
         <div className="mt-2 space-y-3">
-          {projects.map((project) => {
-            const projectBullets = project.bullets
-              .map((bullet) => bullet.trim())
-              .filter(Boolean);
-
-            return (
+          {projects.map((project) => (
               <div key={project.id}>
-                <div className="flex justify-between items-baseline">
+                <div className="flex justify-between items-baseline gap-2">
                   <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                    {project.name || "Project Name"}
+                    <EditableText
+                      value={project.name}
+                      onChange={(value) =>
+                        updateProjectEntry(project.id, { name: value })
+                      }
+                      placeholder="Project Name"
+                    />
                   </span>
-                  {project.technologies.length > 0 && (
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      {project.technologies.join(", ")}
-                    </span>
-                  )}
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    <EditableText
+                      value={project.technologies.join(", ")}
+                      onChange={(value) =>
+                        updateProjectEntry(project.id, {
+                          technologies: parseCommaList(value),
+                        })
+                      }
+                      placeholder="Technologies"
+                    />
+                  </span>
                 </div>
-                {project.description && (
-                  <p className="text-sm text-gray-700 dark:text-gray-300">
-                    {project.description}
-                  </p>
-                )}
-                {projectBullets.length > 0 && (
+                <EditableText
+                  value={project.description}
+                  onChange={(value) =>
+                    updateProjectEntry(project.id, { description: value })
+                  }
+                  placeholder="Project description"
+                  className="text-sm text-gray-700 dark:text-gray-300"
+                  multiline
+                />
+                {project.bullets.length > 0 && (
                   <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
-                    {projectBullets.map((bullet, idx) => (
-                      <li key={idx}>{bullet}</li>
+                    {project.bullets.map((bullet, idx) => (
+                      <li key={idx}>
+                        <EditableText
+                          value={bullet}
+                          onChange={(value) =>
+                            updateProjectBullet(project.id, idx, value)
+                          }
+                          placeholder="Project impact..."
+                        />
+                      </li>
                     ))}
                   </ul>
                 )}
               </div>
-            );
-          })}
+            ))}
         </div>
       </div>
     );
@@ -242,21 +501,10 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
         </h2>
         <div className="mt-2 space-y-3">
           {education.map((entry) => {
-            const primary =
-              educationOrder === "degree-first"
-                ? entry.degree
-                : entry.institution;
-            const secondary =
-              educationOrder === "degree-first"
-                ? entry.institution
-                : entry.degree;
-            const secondaryLine = [
-              secondary,
-              entry.location,
-              entry.gpa ? `GPA: ${entry.gpa}` : "",
-            ]
-              .filter(Boolean)
-              .join(" | ");
+            const primaryField =
+              educationOrder === "degree-first" ? "degree" : "institution";
+            const secondaryField =
+              educationOrder === "degree-first" ? "institution" : "degree";
             const primaryFallback =
               educationOrder === "degree-first"
                 ? "Degree"
@@ -269,13 +517,52 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
             return (
               <div key={entry.id}>
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                  {primary || primaryFallback}
+                  <EditableText
+                    value={entry[primaryField] ?? ""}
+                    onChange={(value) =>
+                      updateEducationEntry(entry.id, {
+                        [primaryField]: value,
+                      } as Partial<ResumeData["education"][number]>)
+                    }
+                    placeholder={primaryFallback}
+                  />
                 </p>
-                {(secondaryLine || secondaryFallback) && (
-                  <p className="text-sm text-gray-700 dark:text-gray-300">
-                    {secondaryLine || secondaryFallback}
-                  </p>
-                )}
+                <p className="text-sm text-gray-700 dark:text-gray-300">
+                  <EditableText
+                    value={entry[secondaryField] ?? ""}
+                    onChange={(value) =>
+                      updateEducationEntry(entry.id, {
+                        [secondaryField]: value,
+                      } as Partial<ResumeData["education"][number]>)
+                    }
+                    placeholder={secondaryFallback}
+                  />
+                  <span className="text-gray-400"> | </span>
+                  <EditableText
+                    value={entry.location ?? ""}
+                    onChange={(value) =>
+                      updateEducationEntry(entry.id, { location: value })
+                    }
+                    placeholder="Location"
+                  />
+                  {entry.gpa && (
+                    <>
+                      <span className="text-gray-400"> | </span>
+                      <span className="inline-flex items-baseline gap-1">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          GPA:
+                        </span>
+                        <EditableText
+                          value={entry.gpa}
+                          onChange={(value) =>
+                            updateEducationEntry(entry.id, { gpa: value })
+                          }
+                          placeholder="GPA"
+                        />
+                      </span>
+                    </>
+                  )}
+                </p>
               </div>
             );
           })}
@@ -299,14 +586,43 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
                   key={category}
                   className="text-sm text-gray-700 dark:text-gray-300"
                 >
-                  <span className="font-semibold">{category}:</span>{" "}
-                  {categorySkills.map((s) => s.name).join(", ")}
+                  <span className="font-semibold">
+                    <EditableText
+                      value={category}
+                      onChange={(value) => updateSkillCategory(category, value)}
+                      placeholder="Category"
+                    />
+                    :
+                  </span>{" "}
+                  {categorySkills.map((skill, index) => (
+                    <Fragment key={skill.id}>
+                      <EditableText
+                        value={skill.name}
+                        onChange={(value) =>
+                          updateSkill(skill.id, { name: value })
+                        }
+                        placeholder="Skill"
+                      />
+                      {index < categorySkills.length - 1 && ", "}
+                    </Fragment>
+                  ))}
                 </p>
               )
             )}
             {ungroupedSkills.length > 0 && (
               <p className="text-sm text-gray-700 dark:text-gray-300">
-                {ungroupedSkills.map((s) => s.name).join(", ")}
+                {ungroupedSkills.map((skill, index) => (
+                  <Fragment key={skill.id}>
+                    <EditableText
+                      value={skill.name}
+                      onChange={(value) =>
+                        updateSkill(skill.id, { name: value })
+                      }
+                      placeholder="Skill"
+                    />
+                    {index < ungroupedSkills.length - 1 && ", "}
+                  </Fragment>
+                ))}
               </p>
             )}
           </div>
@@ -362,17 +678,37 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
                   {/* Header */}
                   <div className="text-center">
                     <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-                      {metadata.fullName || "Your Name"}
+                      <EditableText
+                        value={metadata.fullName}
+                        onChange={(fullName) => updateMetadata({ fullName })}
+                        placeholder="Your Name"
+                      />
                     </h1>
-                    {metadata.subtitle && (
-                      <p className="mt-0.5 text-sm font-medium text-gray-700 dark:text-gray-300">
-                        {metadata.subtitle}
-                      </p>
-                    )}
+                    <p className="mt-0.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+                      <EditableText
+                        value={metadata.subtitle}
+                        onChange={(subtitle) => updateMetadata({ subtitle })}
+                        placeholder="Professional Title"
+                      />
+                    </p>
                     <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-                      {contactParts.length > 0
-                        ? contactParts.join(" | ")
-                        : "email@example.com | (555) 123-4567 | City, State"}
+                      <EditableText
+                        value={metadata.contactInfo.email}
+                        onChange={(email) => updateContactInfo({ email })}
+                        placeholder="email@example.com"
+                      />
+                      <span className="text-gray-400"> | </span>
+                      <EditableText
+                        value={metadata.contactInfo.phone}
+                        onChange={(phone) => updateContactInfo({ phone })}
+                        placeholder="(555) 123-4567"
+                      />
+                      <span className="text-gray-400"> | </span>
+                      <EditableText
+                        value={metadata.contactInfo.location}
+                        onChange={(location) => updateContactInfo({ location })}
+                        placeholder="City, State"
+                      />
                     </p>
                   </div>
 
@@ -395,60 +731,98 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
                   {/* Sender */}
                   <div>
                     <p className="text-sm text-gray-700 dark:text-gray-300">
-                      {metadata.fullName || "Your Name"}
+                      <EditableText
+                        value={metadata.fullName}
+                        onChange={(fullName) => updateMetadata({ fullName })}
+                        placeholder="Your Name"
+                      />
                       <br />
-                      {metadata.contactInfo.location || "Your Address"}
+                      <EditableText
+                        value={metadata.contactInfo.location}
+                        onChange={(location) =>
+                          updateContactInfo({ location })
+                        }
+                        placeholder="Your Address"
+                      />
                       <br />
-                      {metadata.contactInfo.email || "email@example.com"}
+                      <EditableText
+                        value={metadata.contactInfo.email}
+                        onChange={(email) => updateContactInfo({ email })}
+                        placeholder="email@example.com"
+                      />
                     </p>
                   </div>
 
                   {/* Date */}
                   <div>
                     <p className="text-sm text-gray-700 dark:text-gray-300">
-                      {coverLetter.date || todayFormatted}
+                      <EditableText
+                        value={coverLetter.date}
+                        onChange={(date) => updateCoverLetter({ date })}
+                        placeholder={todayFormatted}
+                      />
                     </p>
                   </div>
 
                   {/* Recipient */}
                   <div>
                     <p className="text-sm text-gray-700 dark:text-gray-300">
-                      {coverLetter.hiringManager || "Hiring Manager"}
-                      {coverLetter.companyAddress && (
-                        <>
-                          <br />
-                          <span className="whitespace-pre-line">
-                            {coverLetter.companyAddress}
-                          </span>
-                        </>
-                      )}
-                      {!coverLetter.companyAddress && (
-                        <>
-                          <br />
-                          Company Name
-                          <br />
-                          Company Address
-                          <br />
-                          City, State ZIP
-                        </>
-                      )}
+                      <EditableText
+                        value={coverLetter.hiringManager}
+                        onChange={(hiringManager) =>
+                          updateCoverLetter({ hiringManager })
+                        }
+                        placeholder="Hiring Manager"
+                      />
+                      <br />
+                      <EditableText
+                        value={coverLetter.companyAddress}
+                        onChange={(companyAddress) =>
+                          updateCoverLetter({ companyAddress })
+                        }
+                        placeholder={
+                          "Company Name\nCompany Address\nCity, State ZIP"
+                        }
+                        multiline
+                      />
                     </p>
                   </div>
 
                   {/* Greeting + body + sign-off */}
                   <div className="space-y-4">
                     <p className="text-sm text-gray-700 dark:text-gray-300">
-                      Dear {coverLetter.hiringManager || "Hiring Manager"},
+                      Dear{" "}
+                      <EditableText
+                        value={coverLetter.hiringManager}
+                        onChange={(hiringManager) =>
+                          updateCoverLetter({ hiringManager })
+                        }
+                        placeholder="Hiring Manager"
+                      />
+                      ,
                     </p>
-                    <p className="whitespace-pre-line text-sm leading-relaxed text-gray-700 dark:text-gray-300">
-                      {coverLetter.body ||
-                        "Your cover letter content will appear here. Use the Cover tab in the editor to write your letter."}
-                    </p>
+                    <EditableText
+                      value={coverLetter.body}
+                      onChange={(body) => updateCoverLetter({ body })}
+                      placeholder={
+                        "Your cover letter content will appear here. Use the Cover tab in the editor to write your letter."
+                      }
+                      className="text-sm leading-relaxed text-gray-700 dark:text-gray-300"
+                      multiline
+                    />
                     <p className="text-sm text-gray-700 dark:text-gray-300">
-                      {coverLetter.sendoff || "Best Regards,"}
+                      <EditableText
+                        value={coverLetter.sendoff}
+                        onChange={(sendoff) => updateCoverLetter({ sendoff })}
+                        placeholder="Best Regards,"
+                      />
                       <br />
                       <br />
-                      {metadata.fullName || "Your Name"}
+                      <EditableText
+                        value={metadata.fullName}
+                        onChange={(fullName) => updateMetadata({ fullName })}
+                        placeholder="Your Name"
+                      />
                     </p>
                   </div>
                 </div>
