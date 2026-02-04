@@ -2,6 +2,7 @@
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DEFAULT_LAYOUT_PREFERENCES } from "@/lib/resume-defaults";
 import type { ResumeData } from "@/types";
 import { CoverLetterEditor } from "./cover-letter-editor";
 import { EducationEditor } from "./education-editor";
@@ -21,10 +22,13 @@ export function ResumeEditorPanel({
   resumeData,
   onResumeUpdate,
 }: ResumeEditorPanelProps) {
-  const layoutPreferences = resumeData.layoutPreferences ?? {
-    experienceOrder: "title-first",
-    educationOrder: "degree-first",
-    sectionOrder: ["summary", "experience", "projects", "education", "skills"],
+  const layoutPreferences = {
+    ...DEFAULT_LAYOUT_PREFERENCES,
+    ...resumeData.layoutPreferences,
+    headerAlignment: {
+      ...DEFAULT_LAYOUT_PREFERENCES.headerAlignment,
+      ...resumeData.layoutPreferences?.headerAlignment,
+    },
   };
 
   return (
@@ -98,8 +102,18 @@ export function ResumeEditorPanel({
               />
               <MetadataEditor
                 metadata={resumeData.metadata}
+                headerAlignment={layoutPreferences.headerAlignment}
                 onChange={(metadata) =>
                   onResumeUpdate({ ...resumeData, metadata })
+                }
+                onHeaderAlignmentChange={(headerAlignment) =>
+                  onResumeUpdate({
+                    ...resumeData,
+                    layoutPreferences: {
+                      ...layoutPreferences,
+                      headerAlignment,
+                    },
+                  })
                 }
               />
             </div>

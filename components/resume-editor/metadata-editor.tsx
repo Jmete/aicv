@@ -3,14 +3,23 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import type { ResumeMetadata } from "@/types";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import type { HeaderAlignment, ResumeMetadata, TextAlignment } from "@/types";
+import { AlignCenter, AlignLeft, AlignRight } from "lucide-react";
 
 interface MetadataEditorProps {
   metadata: ResumeMetadata;
+  headerAlignment: HeaderAlignment;
   onChange: (metadata: ResumeMetadata) => void;
+  onHeaderAlignmentChange: (alignment: HeaderAlignment) => void;
 }
 
-export function MetadataEditor({ metadata, onChange }: MetadataEditorProps) {
+export function MetadataEditor({
+  metadata,
+  headerAlignment,
+  onChange,
+  onHeaderAlignmentChange,
+}: MetadataEditorProps) {
   const handleFieldChange = (field: keyof ResumeMetadata, value: string) => {
     onChange({
       ...metadata,
@@ -30,6 +39,55 @@ export function MetadataEditor({ metadata, onChange }: MetadataEditorProps) {
       },
     });
   };
+
+  const updateAlignment = (
+    field: keyof HeaderAlignment,
+    value: TextAlignment
+  ) => {
+    onHeaderAlignmentChange({
+      ...headerAlignment,
+      [field]: value,
+    });
+  };
+
+  const AlignmentRow = ({
+    label,
+    value,
+    onValueChange,
+  }: {
+    label: string;
+    value: TextAlignment;
+    onValueChange: (value: TextAlignment) => void;
+  }) => (
+    <div className="flex items-center justify-between gap-3">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <ToggleGroup
+        type="single"
+        value={value}
+        onValueChange={(nextValue) => {
+          if (!nextValue) return;
+          onValueChange(nextValue as TextAlignment);
+        }}
+        variant="outline"
+        size="sm"
+        className="justify-end"
+        aria-label={`${label} alignment`}
+      >
+        <ToggleGroupItem value="left" className="h-7 px-2 text-[11px]">
+          <AlignLeft className="h-3.5 w-3.5" />
+          Left
+        </ToggleGroupItem>
+        <ToggleGroupItem value="center" className="h-7 px-2 text-[11px]">
+          <AlignCenter className="h-3.5 w-3.5" />
+          Center
+        </ToggleGroupItem>
+        <ToggleGroupItem value="right" className="h-7 px-2 text-[11px]">
+          <AlignRight className="h-3.5 w-3.5" />
+          Right
+        </ToggleGroupItem>
+      </ToggleGroup>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -105,6 +163,35 @@ export function MetadataEditor({ metadata, onChange }: MetadataEditorProps) {
               className="h-9"
             />
           </div>
+        </div>
+      </div>
+
+      <div className="space-y-4 rounded-lg border border-border bg-card p-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-medium text-foreground">
+            Header Alignment
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Align each line at the top of your resume.
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <AlignmentRow
+            label="Name"
+            value={headerAlignment.name}
+            onValueChange={(value) => updateAlignment("name", value)}
+          />
+          <AlignmentRow
+            label="Subtitle"
+            value={headerAlignment.subtitle}
+            onValueChange={(value) => updateAlignment("subtitle", value)}
+          />
+          <AlignmentRow
+            label="Contact"
+            value={headerAlignment.contact}
+            onValueChange={(value) => updateAlignment("contact", value)}
+          />
         </div>
       </div>
 

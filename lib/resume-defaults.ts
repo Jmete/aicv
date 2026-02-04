@@ -36,14 +36,26 @@ export const DEFAULT_SECTION_VISIBILITY = {
   skills: true,
 };
 
+export const DEFAULT_HEADER_ALIGNMENT = {
+  name: "center",
+  subtitle: "center",
+  contact: "center",
+} as const;
+
 export const DEFAULT_LAYOUT_PREFERENCES: {
   experienceOrder: "title-first" | "company-first";
   educationOrder: "degree-first" | "institution-first";
   sectionOrder: ("summary" | "experience" | "projects" | "education" | "skills")[];
+  headerAlignment: {
+    name: "left" | "center" | "right";
+    subtitle: "left" | "center" | "right";
+    contact: "left" | "center" | "right";
+  };
 } = {
   experienceOrder: "title-first",
   educationOrder: "degree-first",
   sectionOrder: ["summary", "experience", "projects", "education", "skills"],
+  headerAlignment: DEFAULT_HEADER_ALIGNMENT,
 };
 
 export const DEFAULT_COVER_LETTER = {

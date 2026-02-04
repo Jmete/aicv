@@ -11,10 +11,17 @@ import type { ClipboardEvent, KeyboardEvent, ReactNode } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { PAPER_DIMENSIONS } from "@/lib/resume-defaults";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { DEFAULT_LAYOUT_PREFERENCES, PAPER_DIMENSIONS } from "@/lib/resume-defaults";
 import { cn } from "@/lib/utils";
-import type { ResumeData, SectionKey, SkillEntry } from "@/types";
-import { Plus, Trash2 } from "lucide-react";
+import type {
+  HeaderAlignment,
+  ResumeData,
+  SectionKey,
+  SkillEntry,
+  TextAlignment,
+} from "@/types";
+import { AlignCenter, AlignLeft, AlignRight, Plus, Trash2 } from "lucide-react";
 import { usePagination } from "@/hooks/use-pagination";
 
 interface ResumeViewerProps {
@@ -117,6 +124,18 @@ export function ResumeViewer({
     skills,
   } = resumeData;
 
+  const resolvedLayoutPreferences = useMemo(
+    () => ({
+      ...DEFAULT_LAYOUT_PREFERENCES,
+      ...layoutPreferences,
+      headerAlignment: {
+        ...DEFAULT_LAYOUT_PREFERENCES.headerAlignment,
+        ...layoutPreferences?.headerAlignment,
+      },
+    }),
+    [layoutPreferences]
+  );
+
   const paperStyle = useMemo(() => {
     const { width, height } = PAPER_DIMENSIONS[pageSettings.paperSize];
     const { margins } = pageSettings;
@@ -168,8 +187,8 @@ export function ResumeViewer({
   const hasProjects = projects.length > 0;
   const hasEducation = education.length > 0;
   const hasSkills = skills.length > 0;
-  const experienceOrder = layoutPreferences?.experienceOrder ?? "title-first";
-  const educationOrder = layoutPreferences?.educationOrder ?? "degree-first";
+  const experienceOrder = resolvedLayoutPreferences.experienceOrder;
+  const educationOrder = resolvedLayoutPreferences.educationOrder;
   const orderedSections = useMemo(() => {
     const fallback: SectionKey[] = [
       "summary",
@@ -178,14 +197,14 @@ export function ResumeViewer({
       "education",
       "skills",
     ];
-    const preferred = layoutPreferences?.sectionOrder ?? fallback;
+    const preferred = resolvedLayoutPreferences.sectionOrder ?? fallback;
     const seen = new Set<SectionKey>();
     return [...preferred, ...fallback].filter((section) => {
       if (seen.has(section)) return false;
       seen.add(section);
       return true;
     });
-  }, [layoutPreferences?.sectionOrder]);
+  }, [resolvedLayoutPreferences.sectionOrder]);
 
   const updateMetadata = (updates: Partial<ResumeData["metadata"]>) => {
     onResumeUpdate({
@@ -204,6 +223,34 @@ export function ResumeViewer({
       contactInfo: {
         ...metadata.contactInfo,
         ...updates,
+      },
+    });
+  };
+
+  const updateLayoutPreferences = (
+    updates: Partial<ResumeData["layoutPreferences"]>
+  ) => {
+    onResumeUpdate({
+      ...resumeData,
+      layoutPreferences: {
+        ...resolvedLayoutPreferences,
+        ...updates,
+        headerAlignment: {
+          ...resolvedLayoutPreferences.headerAlignment,
+          ...updates.headerAlignment,
+        },
+      },
+    });
+  };
+
+  const updateHeaderAlignment = (
+    field: keyof HeaderAlignment,
+    value: TextAlignment
+  ) => {
+    updateLayoutPreferences({
+      headerAlignment: {
+        ...resolvedLayoutPreferences.headerAlignment,
+        [field]: value,
       },
     });
   };
@@ -307,6 +354,63 @@ export function ResumeViewer({
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
+
+  const headerAlignment = resolvedLayoutPreferences.headerAlignment;
+
+  const alignmentClassMap: Record<TextAlignment, string> = {
+    left: "text-left",
+    center: "text-center",
+    right: "text-right",
+  };
+
+  const getAlignmentClass = (value: TextAlignment) =>
+    alignmentClassMap[value] ?? "text-left";
+
+  const renderInlineAlignment = (
+    label: string,
+    value: TextAlignment,
+    onChange: (nextValue: TextAlignment) => void
+  ) => (
+    <div className="pointer-events-none absolute right-0 top-0 z-10 flex items-center gap-1 rounded-md border border-border bg-background/90 px-1 py-0.5 text-[10px] text-muted-foreground shadow-sm opacity-0 backdrop-blur-sm transition group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 print:hidden">
+      <span className="px-1 text-[9px] uppercase tracking-wide text-muted-foreground/70">
+        {label}
+      </span>
+      <ToggleGroup
+        type="single"
+        value={value}
+        onValueChange={(nextValue) => {
+          if (!nextValue) return;
+          onChange(nextValue as TextAlignment);
+        }}
+        variant="outline"
+        size="sm"
+        className="justify-start"
+        aria-label={`${label} alignment`}
+      >
+        <ToggleGroupItem
+          value="left"
+          className="h-6 w-6 min-w-0 px-0"
+          aria-label="Align left"
+        >
+          <AlignLeft className="h-3 w-3" />
+        </ToggleGroupItem>
+        <ToggleGroupItem
+          value="center"
+          className="h-6 w-6 min-w-0 px-0"
+          aria-label="Align center"
+        >
+          <AlignCenter className="h-3 w-3" />
+        </ToggleGroupItem>
+        <ToggleGroupItem
+          value="right"
+          className="h-6 w-6 min-w-0 px-0"
+          aria-label="Align right"
+        >
+          <AlignRight className="h-3 w-3" />
+        </ToggleGroupItem>
+      </ToggleGroup>
+    </div>
+  );
 
   const addExperienceEntry = () => {
     const newEntry: ResumeData["experience"][number] = {
@@ -896,40 +1000,70 @@ export function ResumeViewer({
       id: "header",
       isHeader: false,
       render: () => (
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-            <EditableText
-              value={metadata.fullName}
-              onChange={(fullName) => updateMetadata({ fullName })}
-              placeholder="Your Name"
-            />
-          </h1>
-          <p className="mt-0.5 text-sm font-medium text-gray-700 dark:text-gray-300">
-            <EditableText
-              value={metadata.subtitle}
-              onChange={(subtitle) => updateMetadata({ subtitle })}
-              placeholder="Professional Title"
-            />
-          </p>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            <EditableText
-              value={metadata.contactInfo.email}
-              onChange={(email) => updateContactInfo({ email })}
-              placeholder="email@example.com"
-            />
-            <span className="text-gray-400"> | </span>
-            <EditableText
-              value={metadata.contactInfo.phone}
-              onChange={(phone) => updateContactInfo({ phone })}
-              placeholder="(555) 123-4567"
-            />
-            <span className="text-gray-400"> | </span>
-            <EditableText
-              value={metadata.contactInfo.location}
-              onChange={(location) => updateContactInfo({ location })}
-              placeholder="City, State"
-            />
-          </p>
+        <div>
+          <div
+            className={cn(
+              "relative w-full group",
+              getAlignmentClass(headerAlignment.name)
+            )}
+          >
+            {renderInlineAlignment("Name", headerAlignment.name, (value) =>
+              updateHeaderAlignment("name", value)
+            )}
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+              <EditableText
+                value={metadata.fullName}
+                onChange={(fullName) => updateMetadata({ fullName })}
+                placeholder="Your Name"
+              />
+            </h1>
+          </div>
+          <div
+            className={cn(
+              "relative w-full group",
+              getAlignmentClass(headerAlignment.subtitle)
+            )}
+          >
+            {renderInlineAlignment("Subtitle", headerAlignment.subtitle, (value) =>
+              updateHeaderAlignment("subtitle", value)
+            )}
+            <p className="mt-0.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+              <EditableText
+                value={metadata.subtitle}
+                onChange={(subtitle) => updateMetadata({ subtitle })}
+                placeholder="Professional Title"
+              />
+            </p>
+          </div>
+          <div
+            className={cn(
+              "relative w-full group",
+              getAlignmentClass(headerAlignment.contact)
+            )}
+          >
+            {renderInlineAlignment("Contact", headerAlignment.contact, (value) =>
+              updateHeaderAlignment("contact", value)
+            )}
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              <EditableText
+                value={metadata.contactInfo.email}
+                onChange={(email) => updateContactInfo({ email })}
+                placeholder="email@example.com"
+              />
+              <span className="text-gray-400"> | </span>
+              <EditableText
+                value={metadata.contactInfo.phone}
+                onChange={(phone) => updateContactInfo({ phone })}
+                placeholder="(555) 123-4567"
+              />
+              <span className="text-gray-400"> | </span>
+              <EditableText
+                value={metadata.contactInfo.location}
+                onChange={(location) => updateContactInfo({ location })}
+                placeholder="City, State"
+              />
+            </p>
+          </div>
         </div>
       ),
     });
@@ -1046,11 +1180,14 @@ export function ResumeViewer({
     projects,
     education,
     skills,
-    layoutPreferences,
     groupedSkills,
     ungroupedSkills,
     experienceOrder,
     educationOrder,
+    headerAlignment,
+    getAlignmentClass,
+    renderInlineAlignment,
+    updateHeaderAlignment,
   ]);
 
   // Build cover letter elements

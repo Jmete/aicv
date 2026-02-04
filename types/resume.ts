@@ -52,6 +52,13 @@ export interface EducationEntry {
 
 export type ExperienceOrder = "title-first" | "company-first";
 export type EducationOrder = "degree-first" | "institution-first";
+export type TextAlignment = "left" | "center" | "right";
+
+export interface HeaderAlignment {
+  name: TextAlignment;
+  subtitle: TextAlignment;
+  contact: TextAlignment;
+}
 
 export interface SectionVisibility {
   summary: boolean;
@@ -67,6 +74,7 @@ export interface LayoutPreferences {
   experienceOrder: ExperienceOrder;
   educationOrder: EducationOrder;
   sectionOrder: SectionKey[];
+  headerAlignment: HeaderAlignment;
 }
 
 export interface SkillEntry {
