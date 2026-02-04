@@ -29,46 +29,42 @@ export function ResumeEditorPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-border p-4">
-        <h2 className="text-sm font-medium text-foreground">Resume Editor</h2>
-      </div>
-
       <Tabs defaultValue="info" className="flex flex-1 flex-col overflow-hidden">
-        <div className="border-b border-border px-2">
-          <TabsList className="h-10 w-full justify-start gap-1 bg-transparent p-0">
+        <div className="flex h-[52px] items-center border-b border-border px-4">
+          <TabsList className="grid h-full w-full grid-cols-6 bg-transparent p-0">
             <TabsTrigger
               value="info"
-              className="h-8 rounded-none border-b-2 border-transparent px-3 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
             >
               Info
             </TabsTrigger>
             <TabsTrigger
               value="work"
-              className="h-8 rounded-none border-b-2 border-transparent px-3 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
             >
               Work
             </TabsTrigger>
             <TabsTrigger
               value="projects"
-              className="h-8 rounded-none border-b-2 border-transparent px-3 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
             >
               Projects
             </TabsTrigger>
             <TabsTrigger
               value="education"
-              className="h-8 rounded-none border-b-2 border-transparent px-3 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
             >
               Edu
             </TabsTrigger>
             <TabsTrigger
               value="skills"
-              className="h-8 rounded-none border-b-2 border-transparent px-3 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
             >
               Skills
             </TabsTrigger>
             <TabsTrigger
               value="cover"
-              className="h-8 rounded-none border-b-2 border-transparent px-3 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
             >
               Cover
             </TabsTrigger>
@@ -84,22 +80,22 @@ export function ResumeEditorPanel({
                   onResumeUpdate({ ...resumeData, pageSettings })
                 }
               />
-          <SectionVisibility
-            visibility={resumeData.sectionVisibility}
-            order={layoutPreferences.sectionOrder}
-            onOrderChange={(sectionOrder) =>
-              onResumeUpdate({
-                ...resumeData,
-                layoutPreferences: {
-                  ...layoutPreferences,
-                  sectionOrder,
-                },
-              })
-            }
-            onChange={(sectionVisibility) =>
-              onResumeUpdate({ ...resumeData, sectionVisibility })
-            }
-          />
+              <SectionVisibility
+                visibility={resumeData.sectionVisibility}
+                order={layoutPreferences.sectionOrder}
+                onOrderChange={(sectionOrder) =>
+                  onResumeUpdate({
+                    ...resumeData,
+                    layoutPreferences: {
+                      ...layoutPreferences,
+                      sectionOrder,
+                    },
+                  })
+                }
+                onChange={(sectionVisibility) =>
+                  onResumeUpdate({ ...resumeData, sectionVisibility })
+                }
+              />
               <MetadataEditor
                 metadata={resumeData.metadata}
                 onChange={(metadata) =>

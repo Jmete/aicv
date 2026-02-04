@@ -40,34 +40,38 @@ export function PageSettings({ settings, onChange }: PageSettingsProps) {
   };
 
   return (
-    <div className="space-y-4 rounded-lg border border-border bg-card p-4">
-      <h3 className="text-sm font-medium text-foreground">Page Settings</h3>
+    <div className="space-y-3 rounded-lg border border-border bg-card p-3">
+      <h3 className="text-xs font-medium text-foreground">Page Settings</h3>
 
-      <div className="space-y-3">
-        <div className="space-y-2">
-          <Label className="text-xs text-muted-foreground">Paper Size</Label>
+      <div className="space-y-2">
+        <div className="space-y-1.5">
+          <Label className="text-[11px] text-muted-foreground">
+            Paper Size
+          </Label>
           <ToggleGroup
             type="single"
             value={settings.paperSize}
             onValueChange={handlePaperSizeChange}
             className="justify-start"
           >
-            <ToggleGroupItem value="letter" className="text-xs">
+            <ToggleGroupItem value="letter" className="h-7 px-2 text-[11px]">
               Letter
             </ToggleGroupItem>
-            <ToggleGroupItem value="a4" className="text-xs">
+            <ToggleGroupItem value="a4" className="h-7 px-2 text-[11px]">
               A4
             </ToggleGroupItem>
           </ToggleGroup>
         </div>
 
-        <div className="space-y-2">
-          <Label className="text-xs text-muted-foreground">Margins</Label>
+        <div className="space-y-1.5">
+          <Label className="text-[11px] text-muted-foreground">
+            Margins
+          </Label>
           <Select
             value={settings.marginPreset}
             onValueChange={handleMarginPresetChange}
           >
-            <SelectTrigger className="h-9">
+            <SelectTrigger className="h-8 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
