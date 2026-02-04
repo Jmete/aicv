@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ClipboardEvent, KeyboardEvent, ReactNode } from "react";
+import type { ClipboardEvent, CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import { DEFAULT_LAYOUT_PREFERENCES, PAPER_DIMENSIONS } from "@/lib/resume-defau
 import { cn } from "@/lib/utils";
 import type {
   ContactFieldKey,
+  FontFamily,
   HeaderAlignment,
   ResumeData,
   SectionKey,
@@ -64,6 +65,12 @@ const CONTACT_FIELDS = [
   },
 ] as const;
 
+const FONT_FAMILY_MAP: Record<FontFamily, string> = {
+  serif: "Georgia, 'Times New Roman', serif",
+  sans: "var(--font-geist-sans), system-ui, sans-serif",
+  mono: "var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+};
+
 interface ResumeViewerProps {
   resumeData: ResumeData;
   onResumeUpdate: (data: ResumeData) => void;
@@ -74,6 +81,7 @@ interface EditableTextProps {
   onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
+  style?: CSSProperties;
   multiline?: boolean;
 }
 
@@ -87,6 +95,7 @@ function EditableText({
   onChange,
   placeholder = "",
   className,
+  style,
   multiline = false,
 }: EditableTextProps) {
   const ref = useRef<HTMLSpanElement>(null);
@@ -129,6 +138,7 @@ function EditableText({
         multiline ? "block whitespace-pre-line" : "inline-block",
         className
       )}
+      style={style}
       contentEditable
       suppressContentEditableWarning
       data-placeholder={placeholder}
@@ -173,6 +183,14 @@ export function ResumeViewer({
       headerAlignment: {
         ...DEFAULT_LAYOUT_PREFERENCES.headerAlignment,
         ...layoutPreferences?.headerAlignment,
+      },
+      fontPreferences: {
+        ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences,
+        ...layoutPreferences?.fontPreferences,
+        sizes: {
+          ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences.sizes,
+          ...layoutPreferences?.fontPreferences?.sizes,
+        },
       },
     }),
     [layoutPreferences]
@@ -280,6 +298,14 @@ export function ResumeViewer({
         headerAlignment: {
           ...resolvedLayoutPreferences.headerAlignment,
           ...updates.headerAlignment,
+        },
+        fontPreferences: {
+          ...resolvedLayoutPreferences.fontPreferences,
+          ...updates.fontPreferences,
+          sizes: {
+            ...resolvedLayoutPreferences.fontPreferences.sizes,
+            ...updates.fontPreferences?.sizes,
+          },
         },
       },
     });
@@ -427,6 +453,7 @@ export function ResumeViewer({
   };
 
   const headerAlignment = resolvedLayoutPreferences.headerAlignment;
+  const fontPreferences = resolvedLayoutPreferences.fontPreferences;
 
   const alignmentClassMap: Record<TextAlignment, string> = {
     left: "text-left",
@@ -436,6 +463,28 @@ export function ResumeViewer({
 
   const getAlignmentClass = (value: TextAlignment) =>
     alignmentClassMap[value] ?? "text-left";
+
+  const paperTypographyStyle = useMemo<CSSProperties>(
+    () => ({
+      fontFamily:
+        FONT_FAMILY_MAP[fontPreferences.family] ?? FONT_FAMILY_MAP.serif,
+    }),
+    [fontPreferences.family]
+  );
+
+  const fontSizeStyles = useMemo(() => {
+    const toStyle = (size: number): CSSProperties => ({ fontSize: `${size}px` });
+    return {
+      name: toStyle(fontPreferences.sizes.name),
+      subtitle: toStyle(fontPreferences.sizes.subtitle),
+      contact: toStyle(fontPreferences.sizes.contact),
+      sectionTitle: toStyle(fontPreferences.sizes.sectionTitle),
+      itemTitle: toStyle(fontPreferences.sizes.itemTitle),
+      itemDetail: toStyle(fontPreferences.sizes.itemDetail),
+      itemMeta: toStyle(fontPreferences.sizes.itemMeta),
+      body: toStyle(fontPreferences.sizes.body),
+    };
+  }, [fontPreferences.sizes]);
 
   const renderInlineAlignment = (
     label: string,
@@ -586,7 +635,12 @@ export function ResumeViewer({
   // Granular renderers for pagination
   const renderSectionHeader = (title: string, addButton?: ReactNode) => (
     <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
-      <h2 className="text-sm font-bold uppercase tracking-wide">{title}</h2>
+      <h2
+        className="font-bold uppercase tracking-wide"
+        style={fontSizeStyles.sectionTitle}
+      >
+        {title}
+      </h2>
       {addButton}
     </div>
   );
@@ -599,7 +653,8 @@ export function ResumeViewer({
       value={metadata.summary}
       onChange={(summary) => updateMetadata({ summary })}
       placeholder="Your professional summary will appear here..."
-      className="text-sm leading-relaxed text-gray-700 dark:text-gray-300"
+      className="leading-relaxed text-gray-700 dark:text-gray-300"
+      style={fontSizeStyles.body}
       multiline
     />
   );
@@ -631,7 +686,10 @@ export function ResumeViewer({
     return (
       <div className="group space-y-1">
         <div className="flex items-start justify-between gap-2">
-          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          <span
+            className="min-w-0 flex-1 font-semibold text-gray-900 dark:text-gray-100"
+            style={fontSizeStyles.itemTitle}
+          >
             <EditableText
               value={entry[primaryField]}
               onChange={(value) =>
@@ -642,8 +700,20 @@ export function ResumeViewer({
               placeholder={primaryFallback}
             />
           </span>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-600 dark:text-gray-400">
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+              onClick={() => removeExperienceEntry(entry.id)}
+              aria-label="Remove experience"
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+            <span
+              className="text-gray-600 dark:text-gray-400"
+              style={fontSizeStyles.itemMeta}
+            >
               <EditableText
                 value={entry.startDate}
                 onChange={(value) =>
@@ -662,38 +732,41 @@ export function ResumeViewer({
                 placeholder="Present"
               />
             </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-              onClick={() => removeExperienceEntry(entry.id)}
-              aria-label="Remove experience"
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
           </div>
         </div>
-        <p className="text-sm text-gray-700 dark:text-gray-300">
-          <EditableText
-            value={entry[secondaryField]}
-            onChange={(value) =>
-              updateExperienceEntry(entry.id, {
-                [secondaryField]: value,
-              } as Partial<ResumeData["experience"][number]>)
-            }
-            placeholder={secondaryFallback}
-          />
-          <span className="text-gray-400"> | </span>
-          <EditableText
-            value={entry.location}
-            onChange={(value) =>
-              updateExperienceEntry(entry.id, { location: value })
-            }
-            placeholder="Location"
-          />
-        </p>
+        <div className="flex items-start justify-between gap-2">
+          <p
+            className="min-w-0 flex-1 text-gray-700 dark:text-gray-300"
+            style={fontSizeStyles.itemDetail}
+          >
+            <EditableText
+              value={entry[secondaryField]}
+              onChange={(value) =>
+                updateExperienceEntry(entry.id, {
+                  [secondaryField]: value,
+                } as Partial<ResumeData["experience"][number]>)
+              }
+              placeholder={secondaryFallback}
+            />
+          </p>
+          <p
+            className="shrink-0 text-right text-gray-600 dark:text-gray-400"
+            style={fontSizeStyles.itemDetail}
+          >
+            <EditableText
+              value={entry.location}
+              onChange={(value) =>
+                updateExperienceEntry(entry.id, { location: value })
+              }
+              placeholder="Location"
+            />
+          </p>
+        </div>
         {entry.bullets.length > 0 && (
-          <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
+          <ul
+            className="mt-1 list-inside list-disc text-gray-600 dark:text-gray-400"
+            style={fontSizeStyles.body}
+          >
             {entry.bullets.map((bullet, idx) => (
               <li key={idx} className="group/bullet">
                 <EditableText
@@ -732,7 +805,10 @@ export function ResumeViewer({
   };
 
   const renderExperienceEmpty = () => (
-    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+    <p
+      className="text-gray-500 dark:text-gray-400 italic"
+      style={fontSizeStyles.body}
+    >
       Add experience entries using the button above.
     </p>
   );
@@ -753,8 +829,11 @@ export function ResumeViewer({
 
   const renderProjectItem = (project: ResumeData["projects"][number]) => (
     <div className="group space-y-1">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+      <div className="flex items-start justify-between gap-2">
+        <span
+          className="min-w-0 flex-1 font-semibold text-gray-900 dark:text-gray-100"
+          style={fontSizeStyles.itemTitle}
+        >
           <EditableText
             value={project.name}
             onChange={(value) =>
@@ -763,8 +842,20 @@ export function ResumeViewer({
             placeholder="Project Name"
           />
         </span>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500 dark:text-gray-400">
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+            onClick={() => removeProjectEntry(project.id)}
+            aria-label="Remove project"
+          >
+            <Trash2 className="h-3 w-3" />
+          </Button>
+          <span
+            className="text-right text-gray-500 dark:text-gray-400"
+            style={fontSizeStyles.itemMeta}
+          >
             <EditableText
               value={project.technologies.join(", ")}
               onChange={(value) =>
@@ -775,15 +866,6 @@ export function ResumeViewer({
               placeholder="Technologies"
             />
           </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-            onClick={() => removeProjectEntry(project.id)}
-            aria-label="Remove project"
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
         </div>
       </div>
       <EditableText
@@ -792,11 +874,15 @@ export function ResumeViewer({
           updateProjectEntry(project.id, { description: value })
         }
         placeholder="Project description"
-        className="text-sm text-gray-700 dark:text-gray-300"
+        className="text-gray-700 dark:text-gray-300"
+        style={fontSizeStyles.body}
         multiline
       />
       {project.bullets.length > 0 && (
-        <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
+        <ul
+          className="mt-1 list-inside list-disc text-gray-600 dark:text-gray-400"
+          style={fontSizeStyles.body}
+        >
           {project.bullets.map((bullet, idx) => (
             <li key={idx} className="group/bullet">
               <EditableText
@@ -832,7 +918,10 @@ export function ResumeViewer({
   );
 
   const renderProjectsEmpty = () => (
-    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+    <p
+      className="text-gray-500 dark:text-gray-400 italic"
+      style={fontSizeStyles.body}
+    >
       Add project entries using the button above.
     </p>
   );
@@ -868,7 +957,10 @@ export function ResumeViewer({
     return (
       <div className="group space-y-1">
         <div className="flex items-start justify-between gap-2">
-          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          <p
+            className="font-semibold text-gray-900 dark:text-gray-100"
+            style={fontSizeStyles.itemTitle}
+          >
             <EditableText
               value={entry[primaryField] ?? ""}
               onChange={(value) =>
@@ -879,58 +971,87 @@ export function ResumeViewer({
               placeholder={primaryFallback}
             />
           </p>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-            onClick={() => removeEducationEntry(entry.id)}
-            aria-label="Remove education"
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+              onClick={() => removeEducationEntry(entry.id)}
+              aria-label="Remove education"
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+            <span
+              className="text-gray-600 dark:text-gray-400"
+              style={fontSizeStyles.itemMeta}
+            >
+              <EditableText
+                value={entry.graduationDate ?? ""}
+                onChange={(value) =>
+                  updateEducationEntry(entry.id, { graduationDate: value })
+                }
+                placeholder="Graduation"
+              />
+            </span>
+          </div>
         </div>
-        <p className="text-sm text-gray-700 dark:text-gray-300">
-          <EditableText
-            value={entry[secondaryField] ?? ""}
-            onChange={(value) =>
-              updateEducationEntry(entry.id, {
-                [secondaryField]: value,
-              } as Partial<ResumeData["education"][number]>)
-            }
-            placeholder={secondaryFallback}
-          />
-          <span className="text-gray-400"> | </span>
-          <EditableText
-            value={entry.location ?? ""}
-            onChange={(value) =>
-              updateEducationEntry(entry.id, { location: value })
-            }
-            placeholder="Location"
-          />
-          {entry.gpa && (
-            <>
-              <span className="text-gray-400"> | </span>
-              <span className="inline-flex items-baseline gap-1">
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  GPA:
+        <div className="flex items-start justify-between gap-2">
+          <p
+            className="text-gray-700 dark:text-gray-300"
+            style={fontSizeStyles.itemDetail}
+          >
+            <EditableText
+              value={entry[secondaryField] ?? ""}
+              onChange={(value) =>
+                updateEducationEntry(entry.id, {
+                  [secondaryField]: value,
+                } as Partial<ResumeData["education"][number]>)
+              }
+              placeholder={secondaryFallback}
+            />
+            {entry.gpa && (
+              <>
+                <span className="text-gray-400"> | </span>
+                <span className="inline-flex items-baseline gap-1">
+                  <span
+                    className="text-gray-500 dark:text-gray-400"
+                    style={fontSizeStyles.itemMeta}
+                  >
+                    GPA:
+                  </span>
+                  <EditableText
+                    value={entry.gpa}
+                    onChange={(value) =>
+                      updateEducationEntry(entry.id, { gpa: value })
+                    }
+                    placeholder="GPA"
+                  />
                 </span>
-                <EditableText
-                  value={entry.gpa}
-                  onChange={(value) =>
-                    updateEducationEntry(entry.id, { gpa: value })
-                  }
-                  placeholder="GPA"
-                />
-              </span>
-            </>
-          )}
-        </p>
+              </>
+            )}
+          </p>
+          <p
+            className="text-right text-gray-600 dark:text-gray-400"
+            style={fontSizeStyles.itemDetail}
+          >
+            <EditableText
+              value={entry.location ?? ""}
+              onChange={(value) =>
+                updateEducationEntry(entry.id, { location: value })
+              }
+              placeholder="Location"
+            />
+          </p>
+        </div>
       </div>
     );
   };
 
   const renderEducationEmpty = () => (
-    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+    <p
+      className="text-gray-500 dark:text-gray-400 italic"
+      style={fontSizeStyles.body}
+    >
       Add education entries using the button above.
     </p>
   );
@@ -988,7 +1109,10 @@ export function ResumeViewer({
               key={category}
               className="flex items-start justify-between gap-2"
             >
-              <p className="text-sm text-gray-700 dark:text-gray-300">
+              <p
+                className="text-gray-700 dark:text-gray-300"
+                style={fontSizeStyles.body}
+              >
                 <span className="font-semibold">
                   <EditableText
                     value={category}
@@ -1020,7 +1144,10 @@ export function ResumeViewer({
         )}
         {ungroupedSkills.length > 0 && (
           <div className="flex items-start justify-between gap-2">
-            <p className="text-sm text-gray-700 dark:text-gray-300">
+            <p
+              className="text-gray-700 dark:text-gray-300"
+              style={fontSizeStyles.body}
+            >
               {ungroupedSkills.map((skill, index) => (
                 <Fragment key={skill.id}>
                   {renderSkillItem(skill)}
@@ -1044,7 +1171,10 @@ export function ResumeViewer({
   };
 
   const renderSkillsEmpty = () => (
-    <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+    <p
+      className="text-gray-500 dark:text-gray-400 italic"
+      style={fontSizeStyles.body}
+    >
       Add skills using the buttons above.
     </p>
   );
@@ -1081,7 +1211,10 @@ export function ResumeViewer({
             {renderInlineAlignment("Name", headerAlignment.name, (value) =>
               updateHeaderAlignment("name", value)
             )}
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            <h1
+              className="font-bold text-gray-900 dark:text-gray-100"
+              style={fontSizeStyles.name}
+            >
               <EditableText
                 value={metadata.fullName}
                 onChange={(fullName) => updateMetadata({ fullName })}
@@ -1098,7 +1231,10 @@ export function ResumeViewer({
             {renderInlineAlignment("Subtitle", headerAlignment.subtitle, (value) =>
               updateHeaderAlignment("subtitle", value)
             )}
-            <p className="mt-0.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+            <p
+              className="mt-0.5 font-medium text-gray-700 dark:text-gray-300"
+              style={fontSizeStyles.subtitle}
+            >
               <EditableText
                 value={metadata.subtitle}
                 onChange={(subtitle) => updateMetadata({ subtitle })}
@@ -1115,7 +1251,10 @@ export function ResumeViewer({
             {renderInlineAlignment("Contact", headerAlignment.contact, (value) =>
               updateHeaderAlignment("contact", value)
             )}
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+            <p
+              className="mt-1 text-gray-600 dark:text-gray-400"
+              style={fontSizeStyles.contact}
+            >
               {(() => {
                 type ContactItem = {
                   key: ContactFieldKey;
@@ -1302,6 +1441,7 @@ export function ResumeViewer({
     contactFieldMap,
     normalizeProfileUrl,
     headerAlignment,
+    fontSizeStyles,
     getAlignmentClass,
     renderInlineAlignment,
     updateContactInfo,
@@ -1317,7 +1457,10 @@ export function ResumeViewer({
       isHeader: false,
       render: () => (
         <div>
-          <p className="text-sm text-gray-700 dark:text-gray-300">
+          <p
+            className="text-gray-700 dark:text-gray-300"
+            style={fontSizeStyles.body}
+          >
             <EditableText
               value={metadata.fullName}
               onChange={(fullName) => updateMetadata({ fullName })}
@@ -1345,7 +1488,10 @@ export function ResumeViewer({
       isHeader: false,
       render: () => (
         <div>
-          <p className="text-sm text-gray-700 dark:text-gray-300">
+          <p
+            className="text-gray-700 dark:text-gray-300"
+            style={fontSizeStyles.itemMeta}
+          >
             <EditableText
               value={coverLetter.date}
               onChange={(date) => updateCoverLetter({ date })}
@@ -1361,7 +1507,10 @@ export function ResumeViewer({
       isHeader: false,
       render: () => (
         <div>
-          <p className="text-sm text-gray-700 dark:text-gray-300">
+          <p
+            className="text-gray-700 dark:text-gray-300"
+            style={fontSizeStyles.body}
+          >
             <EditableText
               value={coverLetter.hiringManager}
               onChange={(hiringManager) => updateCoverLetter({ hiringManager })}
@@ -1384,7 +1533,10 @@ export function ResumeViewer({
       isHeader: false,
       render: () => (
         <div className="space-y-4">
-          <p className="text-sm text-gray-700 dark:text-gray-300">
+          <p
+            className="text-gray-700 dark:text-gray-300"
+            style={fontSizeStyles.body}
+          >
             Dear{" "}
             <EditableText
               value={coverLetter.hiringManager}
@@ -1397,10 +1549,14 @@ export function ResumeViewer({
             value={coverLetter.body}
             onChange={(body) => updateCoverLetter({ body })}
             placeholder="Your cover letter content will appear here. Use the Cover tab in the editor to write your letter."
-            className="text-sm leading-relaxed text-gray-700 dark:text-gray-300"
+            className="leading-relaxed text-gray-700 dark:text-gray-300"
+            style={fontSizeStyles.body}
             multiline
           />
-          <p className="text-sm text-gray-700 dark:text-gray-300">
+          <p
+            className="text-gray-700 dark:text-gray-300"
+            style={fontSizeStyles.body}
+          >
             <EditableText
               value={coverLetter.sendoff}
               onChange={(sendoff) => updateCoverLetter({ sendoff })}
@@ -1419,7 +1575,7 @@ export function ResumeViewer({
     });
 
     return elements;
-  }, [metadata, coverLetter, todayFormatted]);
+  }, [metadata, coverLetter, todayFormatted, fontSizeStyles]);
 
   // Register elements with pagination hooks
   useEffect(() => {
@@ -1539,10 +1695,11 @@ export function ResumeViewer({
                 {resumePageIndices.map((pageIndex) => (
                   <div
                     key={pageIndex}
-                    className="document-paper rounded-sm overflow-hidden"
-                    style={{
+                  className="document-paper rounded-sm overflow-hidden"
+                  style={{
                       ...paperStyle,
                       ...getPageHeightStyle(resumePagination.pageDimensions),
+                      ...paperTypographyStyle,
                     }}
                   >
                     <div className="space-y-4">
@@ -1574,10 +1731,11 @@ export function ResumeViewer({
                 {coverLetterPageIndices.map((pageIndex) => (
                   <div
                     key={pageIndex}
-                    className="document-paper rounded-sm overflow-hidden"
-                    style={{
+                  className="document-paper rounded-sm overflow-hidden"
+                  style={{
                       ...paperStyle,
                       ...getPageHeightStyle(coverLetterPagination.pageDimensions),
+                      ...paperTypographyStyle,
                     }}
                   >
                     <div className="space-y-6">

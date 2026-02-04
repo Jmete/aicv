@@ -58,6 +58,20 @@ export const DEFAULT_CONTACT_ORDER: ContactFieldKey[] = [
   "github",
 ];
 
+export const DEFAULT_FONT_PREFERENCES = {
+  family: "serif",
+  sizes: {
+    name: 24,
+    subtitle: 14,
+    contact: 14,
+    sectionTitle: 14,
+    itemTitle: 14,
+    itemDetail: 14,
+    itemMeta: 12,
+    body: 14,
+  },
+} as const;
+
 export const DEFAULT_LAYOUT_PREFERENCES: {
   experienceOrder: "title-first" | "company-first";
   educationOrder: "degree-first" | "institution-first";
@@ -68,12 +82,26 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
     subtitle: "left" | "center" | "right";
     contact: "left" | "center" | "right";
   };
+  fontPreferences: {
+    family: "serif" | "sans" | "mono";
+    sizes: {
+      name: number;
+      subtitle: number;
+      contact: number;
+      sectionTitle: number;
+      itemTitle: number;
+      itemDetail: number;
+      itemMeta: number;
+      body: number;
+    };
+  };
 } = {
   experienceOrder: "title-first",
   educationOrder: "degree-first",
   sectionOrder: ["summary", "experience", "projects", "education", "skills"],
   contactOrder: DEFAULT_CONTACT_ORDER,
   headerAlignment: DEFAULT_HEADER_ALIGNMENT,
+  fontPreferences: DEFAULT_FONT_PREFERENCES,
 };
 
 export const DEFAULT_COVER_LETTER = {

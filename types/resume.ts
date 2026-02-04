@@ -60,6 +60,23 @@ export interface EducationEntry {
 export type ExperienceOrder = "title-first" | "company-first";
 export type EducationOrder = "degree-first" | "institution-first";
 export type TextAlignment = "left" | "center" | "right";
+export type FontFamily = "serif" | "sans" | "mono";
+
+export interface FontSizeSettings {
+  name: number;
+  subtitle: number;
+  contact: number;
+  sectionTitle: number;
+  itemTitle: number;
+  itemDetail: number;
+  itemMeta: number;
+  body: number;
+}
+
+export interface FontPreferences {
+  family: FontFamily;
+  sizes: FontSizeSettings;
+}
 
 export interface HeaderAlignment {
   name: TextAlignment;
@@ -83,6 +100,7 @@ export interface LayoutPreferences {
   sectionOrder: SectionKey[];
   contactOrder: ContactFieldKey[];
   headerAlignment: HeaderAlignment;
+  fontPreferences: FontPreferences;
 }
 
 export interface SkillEntry {

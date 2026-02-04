@@ -7,6 +7,7 @@ import type { ResumeData } from "@/types";
 import { CoverLetterEditor } from "./cover-letter-editor";
 import { EducationEditor } from "./education-editor";
 import { ExperienceEditor } from "./experience-editor";
+import { FontSettings } from "./font-settings";
 import { HeaderAlignmentEditor } from "./header-alignment-editor";
 import { MetadataEditor } from "./metadata-editor";
 import { PageSettings } from "./page-settings";
@@ -32,6 +33,14 @@ export function ResumeEditorPanel({
     headerAlignment: {
       ...DEFAULT_LAYOUT_PREFERENCES.headerAlignment,
       ...resumeData.layoutPreferences?.headerAlignment,
+    },
+    fontPreferences: {
+      ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences,
+      ...resumeData.layoutPreferences?.fontPreferences,
+      sizes: {
+        ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences.sizes,
+        ...resumeData.layoutPreferences?.fontPreferences?.sizes,
+      },
     },
   };
 
@@ -139,6 +148,18 @@ export function ResumeEditorPanel({
                     layoutPreferences: {
                       ...layoutPreferences,
                       headerAlignment,
+                    },
+                  })
+                }
+              />
+              <FontSettings
+                preferences={layoutPreferences.fontPreferences}
+                onChange={(fontPreferences) =>
+                  onResumeUpdate({
+                    ...resumeData,
+                    layoutPreferences: {
+                      ...layoutPreferences,
+                      fontPreferences,
                     },
                   })
                 }

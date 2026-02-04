@@ -1,6 +1,7 @@
 export { CoverLetterEditor } from "./cover-letter-editor";
 export { EducationEditor } from "./education-editor";
 export { ExperienceEditor } from "./experience-editor";
+export { FontSettings } from "./font-settings";
 export { MetadataEditor } from "./metadata-editor";
 export { PageSettings } from "./page-settings";
 export { ProjectsEditor } from "./projects-editor";
