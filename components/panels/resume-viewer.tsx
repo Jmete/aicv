@@ -1,17 +1,27 @@
 "use client";
 
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PAPER_DIMENSIONS } from "@/lib/resume-defaults";
-import type { ResumeData, SkillEntry } from "@/types";
+import type { ResumeData, SectionKey, SkillEntry } from "@/types";
 
 interface ResumeViewerProps {
   resumeData: ResumeData;
 }
 
 export function ResumeViewer({ resumeData }: ResumeViewerProps) {
-  const { pageSettings, metadata, sectionVisibility, coverLetter, experience, projects, education, skills } = resumeData;
+  const {
+    pageSettings,
+    metadata,
+    sectionVisibility,
+    layoutPreferences,
+    coverLetter,
+    experience,
+    projects,
+    education,
+    skills,
+  } = resumeData;
 
   const paperStyle = useMemo(() => {
     const { width, height } = PAPER_DIMENSIONS[pageSettings.paperSize];
@@ -29,16 +39,26 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
     };
   }, [pageSettings]);
 
-  // Group skills by category
-  const skillsByCategory = useMemo(() => {
-    return skills.reduce<Record<string, SkillEntry[]>>((acc, skill) => {
-      const category = skill.category || "Other";
-      if (!acc[category]) {
-        acc[category] = [];
+  const { groupedSkills, ungroupedSkills } = useMemo(() => {
+    const grouped: Record<string, SkillEntry[]> = {};
+    const ungrouped: SkillEntry[] = [];
+
+    skills.forEach((skill) => {
+      const name = skill.name.trim();
+      const category = (skill.category || "").trim();
+      if (!name) return;
+
+      if (category) {
+        if (!grouped[category]) {
+          grouped[category] = [];
+        }
+        grouped[category].push({ ...skill, name, category });
+      } else {
+        ungrouped.push({ ...skill, name, category: "" });
       }
-      acc[category].push(skill);
-      return acc;
-    }, {});
+    });
+
+    return { groupedSkills: grouped, ungroupedSkills: ungrouped };
   }, [skills]);
 
   // Build contact info string
@@ -64,11 +84,260 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
   const hasProjects = projects.length > 0;
   const hasEducation = education.length > 0;
   const hasSkills = skills.length > 0;
+  const experienceOrder = layoutPreferences?.experienceOrder ?? "title-first";
+  const educationOrder = layoutPreferences?.educationOrder ?? "degree-first";
+  const orderedSections = useMemo(() => {
+    const fallback: SectionKey[] = [
+      "summary",
+      "experience",
+      "projects",
+      "education",
+      "skills",
+    ];
+    const preferred = layoutPreferences?.sectionOrder ?? fallback;
+    const seen = new Set<SectionKey>();
+    return [...preferred, ...fallback].filter((section) => {
+      if (seen.has(section)) return false;
+      seen.add(section);
+      return true;
+    });
+  }, [layoutPreferences?.sectionOrder]);
+
+  const renderSummary = () => {
+    if (!sectionVisibility.summary) return null;
+    return (
+      <div>
+        <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
+          Summary
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-gray-700 dark:text-gray-300">
+          {metadata.summary ||
+            "Your professional summary will appear here..."}
+        </p>
+      </div>
+    );
+  };
+
+  const renderExperience = () => {
+    if (!sectionVisibility.experience) return null;
+    if (hasExperience) {
+      return (
+        <div>
+          <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
+            Experience
+          </h2>
+          <div className="mt-2 space-y-3">
+            {experience.map((entry) => {
+              const primary =
+                experienceOrder === "title-first"
+                  ? entry.jobTitle
+                  : entry.company;
+              const secondary =
+                experienceOrder === "title-first"
+                  ? entry.company
+                  : entry.jobTitle;
+              const secondaryLine = [secondary, entry.location]
+                .filter(Boolean)
+                .join(" | ");
+              const primaryFallback =
+                experienceOrder === "title-first"
+                  ? "Job Title"
+                  : "Company Name";
+              const secondaryFallback =
+                experienceOrder === "title-first"
+                  ? "Company Name"
+                  : "Job Title";
+
+              return (
+                <div key={entry.id}>
+                  <div className="flex justify-between">
+                    <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                      {primary || primaryFallback}
+                    </span>
+                    <span className="text-sm text-gray-600 dark:text-gray-400">
+                      {entry.startDate || "Start"} - {entry.endDate || "Present"}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-700 dark:text-gray-300">
+                    {secondaryLine || secondaryFallback}
+                  </p>
+                  {entry.bullets.length > 0 && (
+                    <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
+                      {entry.bullets.map((bullet, idx) => (
+                        <li key={idx}>{bullet}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
+          Experience
+        </h2>
+        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
+          Add experience entries in the editor panel...
+        </p>
+      </div>
+    );
+  };
+
+  const renderProjects = () => {
+    if (!sectionVisibility.projects || !hasProjects) return null;
+    return (
+      <div>
+        <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
+          Projects
+        </h2>
+        <div className="mt-2 space-y-3">
+          {projects.map((project) => {
+            const projectBullets = project.bullets
+              .map((bullet) => bullet.trim())
+              .filter(Boolean);
+
+            return (
+              <div key={project.id}>
+                <div className="flex justify-between items-baseline">
+                  <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    {project.name || "Project Name"}
+                  </span>
+                  {project.technologies.length > 0 && (
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {project.technologies.join(", ")}
+                    </span>
+                  )}
+                </div>
+                {project.description && (
+                  <p className="text-sm text-gray-700 dark:text-gray-300">
+                    {project.description}
+                  </p>
+                )}
+                {projectBullets.length > 0 && (
+                  <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
+                    {projectBullets.map((bullet, idx) => (
+                      <li key={idx}>{bullet}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const renderEducation = () => {
+    if (!sectionVisibility.education || !hasEducation) return null;
+    return (
+      <div>
+        <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
+          Education
+        </h2>
+        <div className="mt-2 space-y-3">
+          {education.map((entry) => {
+            const primary =
+              educationOrder === "degree-first"
+                ? entry.degree
+                : entry.institution;
+            const secondary =
+              educationOrder === "degree-first"
+                ? entry.institution
+                : entry.degree;
+            const secondaryLine = [
+              secondary,
+              entry.location,
+              entry.gpa ? `GPA: ${entry.gpa}` : "",
+            ]
+              .filter(Boolean)
+              .join(" | ");
+            const primaryFallback =
+              educationOrder === "degree-first"
+                ? "Degree"
+                : "University Name";
+            const secondaryFallback =
+              educationOrder === "degree-first"
+                ? "University Name"
+                : "Degree";
+
+            return (
+              <div key={entry.id}>
+                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  {primary || primaryFallback}
+                </p>
+                {(secondaryLine || secondaryFallback) && (
+                  <p className="text-sm text-gray-700 dark:text-gray-300">
+                    {secondaryLine || secondaryFallback}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSkills = () => {
+    if (!sectionVisibility.skills) return null;
+    if (hasSkills) {
+      return (
+        <div>
+          <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
+            Skills
+          </h2>
+          <div className="mt-2 space-y-1">
+            {Object.entries(groupedSkills).map(
+              ([category, categorySkills]) => (
+                <p
+                  key={category}
+                  className="text-sm text-gray-700 dark:text-gray-300"
+                >
+                  <span className="font-semibold">{category}:</span>{" "}
+                  {categorySkills.map((s) => s.name).join(", ")}
+                </p>
+              )
+            )}
+            {ungroupedSkills.length > 0 && (
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                {ungroupedSkills.map((s) => s.name).join(", ")}
+              </p>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
+          Skills
+        </h2>
+        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
+          Add skills in the editor panel...
+        </p>
+      </div>
+    );
+  };
+
+  const sectionRenderers: Record<SectionKey, () => JSX.Element | null> = {
+    summary: renderSummary,
+    experience: renderExperience,
+    projects: renderProjects,
+    education: renderEducation,
+    skills: renderSkills,
+  };
 
   return (
     <div className="flex h-full flex-col">
       <Tabs defaultValue="resume" className="flex h-full flex-col">
-        <div className="border-b border-border px-4">
+        <div className="flex h-[52px] items-center border-b border-border px-4">
           <TabsList className="h-12 w-full justify-start gap-4 bg-transparent p-0">
             <TabsTrigger
               value="resume"
@@ -107,158 +376,12 @@ export function ResumeViewer({ resumeData }: ResumeViewerProps) {
                     </p>
                   </div>
 
-                  {/* Summary */}
-                  {sectionVisibility.summary && (
-                    <div>
-                      <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-                        Summary
-                      </h2>
-                      <p className="mt-2 text-sm leading-relaxed text-gray-700 dark:text-gray-300">
-                        {metadata.summary ||
-                          "Your professional summary will appear here..."}
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Experience */}
-                  {sectionVisibility.experience && hasExperience && (
-                    <div>
-                      <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-                        Experience
-                      </h2>
-                      <div className="mt-2 space-y-3">
-                        {experience.map((entry) => (
-                          <div key={entry.id}>
-                            <div className="flex justify-between">
-                              <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                                {entry.jobTitle || "Job Title"}
-                              </span>
-                              <span className="text-sm text-gray-600 dark:text-gray-400">
-                                {entry.startDate || "Start"} - {entry.endDate || "Present"}
-                              </span>
-                            </div>
-                            <p className="text-sm text-gray-700 dark:text-gray-300">
-                              {entry.company || "Company Name"}
-                              {entry.location && ` | ${entry.location}`}
-                            </p>
-                            {entry.bullets.length > 0 && (
-                              <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
-                                {entry.bullets.map((bullet, idx) => (
-                                  <li key={idx}>{bullet}</li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Projects */}
-                  {sectionVisibility.projects && hasProjects && (
-                    <div>
-                      <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-                        Projects
-                      </h2>
-                      <div className="mt-2 space-y-3">
-                        {projects.map((project) => (
-                          <div key={project.id}>
-                            <div className="flex justify-between items-baseline">
-                              <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                                {project.name || "Project Name"}
-                              </span>
-                              {project.technologies.length > 0 && (
-                                <span className="text-xs text-gray-500 dark:text-gray-400">
-                                  {project.technologies.join(", ")}
-                                </span>
-                              )}
-                            </div>
-                            {project.description && (
-                              <p className="text-sm text-gray-700 dark:text-gray-300">
-                                {project.description}
-                              </p>
-                            )}
-                            {project.bullets.length > 0 && (
-                              <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
-                                {project.bullets.map((bullet, idx) => (
-                                  <li key={idx}>{bullet}</li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Education */}
-                  {sectionVisibility.education && hasEducation && (
-                    <div>
-                      <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-                        Education
-                      </h2>
-                      <div className="mt-2 space-y-3">
-                        {education.map((entry) => (
-                          <div key={entry.id}>
-                            <div className="flex justify-between">
-                              <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                                {entry.institution || "Institution"}
-                              </span>
-                              <span className="text-sm text-gray-600 dark:text-gray-400">
-                                {entry.graduationDate || "Graduation Date"}
-                              </span>
-                            </div>
-                            <p className="text-sm text-gray-700 dark:text-gray-300">
-                              {entry.degree || "Degree"}
-                              {entry.field && ` in ${entry.field}`}
-                              {entry.gpa && ` | GPA: ${entry.gpa}`}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Skills */}
-                  {sectionVisibility.skills && hasSkills && (
-                    <div>
-                      <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-                        Skills
-                      </h2>
-                      <div className="mt-2 space-y-1">
-                        {Object.entries(skillsByCategory).map(([category, categorySkills]) => (
-                          <p key={category} className="text-sm text-gray-700 dark:text-gray-300">
-                            <span className="font-semibold">{category}:</span>{" "}
-                            {categorySkills.map((s) => s.name).join(", ")}
-                          </p>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Empty state for Experience when no entries */}
-                  {sectionVisibility.experience && !hasExperience && (
-                    <div>
-                      <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-                        Experience
-                      </h2>
-                      <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
-                        Add experience entries in the editor panel...
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Empty state for Skills when no entries */}
-                  {sectionVisibility.skills && !hasSkills && (
-                    <div>
-                      <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-                        Skills
-                      </h2>
-                      <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
-                        Add skills in the editor panel...
-                      </p>
-                    </div>
-                  )}
+                  {orderedSections.map((section) => {
+                    const content = sectionRenderers[section]();
+                    return content ? (
+                      <Fragment key={section}>{content}</Fragment>
+                    ) : null;
+                  })}
                 </div>
               </div>
             </TabsContent>

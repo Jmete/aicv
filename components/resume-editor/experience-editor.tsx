@@ -4,16 +4,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import type { ExperienceEntry } from "@/types";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import type { ExperienceEntry, ExperienceOrder } from "@/types";
 import { Plus, Trash2 } from "lucide-react";
 
 interface ExperienceEditorProps {
   experience: ExperienceEntry[];
+  order: ExperienceOrder;
+  onOrderChange: (order: ExperienceOrder) => void;
   onChange: (experience: ExperienceEntry[]) => void;
 }
 
 export function ExperienceEditor({
   experience,
+  order,
+  onOrderChange,
   onChange,
 }: ExperienceEditorProps) {
   const addEntry = () => {
@@ -65,6 +70,33 @@ export function ExperienceEditor({
 
   return (
     <div className="space-y-4">
+      <div className="space-y-2 rounded-lg border border-border bg-card p-3">
+        <Label className="text-xs text-muted-foreground">Display Order</Label>
+        <ToggleGroup
+          type="single"
+          value={order}
+          onValueChange={(value) => {
+            if (value) {
+              onOrderChange(value as ExperienceOrder);
+            }
+          }}
+          className="justify-start"
+        >
+          <ToggleGroupItem
+            value="title-first"
+            className="h-7 px-2 text-[11px]"
+          >
+            Title on Top
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="company-first"
+            className="h-7 px-2 text-[11px]"
+          >
+            Company on Top
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+
       {experience.map((entry, index) => (
         <div
           key={entry.id}

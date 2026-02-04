@@ -42,11 +42,31 @@ export interface ProjectEntry {
 
 export interface EducationEntry {
   id: string;
-  institution: string;
   degree: string;
-  field: string;
-  graduationDate: string;
+  institution?: string;
+  location?: string;
+  field?: string;
+  graduationDate?: string;
   gpa?: string;
+}
+
+export type ExperienceOrder = "title-first" | "company-first";
+export type EducationOrder = "degree-first" | "institution-first";
+
+export interface SectionVisibility {
+  summary: boolean;
+  experience: boolean;
+  projects: boolean;
+  education: boolean;
+  skills: boolean;
+}
+
+export type SectionKey = keyof SectionVisibility;
+
+export interface LayoutPreferences {
+  experienceOrder: ExperienceOrder;
+  educationOrder: EducationOrder;
+  sectionOrder: SectionKey[];
 }
 
 export interface SkillEntry {
@@ -63,18 +83,11 @@ export interface CoverLetterData {
   sendoff: string;
 }
 
-export interface SectionVisibility {
-  summary: boolean;
-  experience: boolean;
-  projects: boolean;
-  education: boolean;
-  skills: boolean;
-}
-
 export interface ResumeData {
   pageSettings: PageSettings;
   metadata: ResumeMetadata;
   sectionVisibility: SectionVisibility;
+  layoutPreferences: LayoutPreferences;
   coverLetter: CoverLetterData;
   experience: ExperienceEntry[];
   projects: ProjectEntry[];

@@ -1,15 +1,9 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import type { SkillEntry } from "@/types";
 import { Plus, Trash2 } from "lucide-react";
 
@@ -18,25 +12,14 @@ interface SkillsEditorProps {
   onChange: (skills: SkillEntry[]) => void;
 }
 
-const SKILL_CATEGORIES = [
-  "Programming Languages",
-  "Frontend",
-  "Backend",
-  "Databases",
-  "DevOps",
-  "Cloud",
-  "Tools",
-  "Architecture",
-  "Methodologies",
-  "Other",
-];
-
 export function SkillsEditor({ skills, onChange }: SkillsEditorProps) {
-  const addSkill = () => {
+  const [newSkillGroup, setNewSkillGroup] = useState("");
+
+  const addSkill = (category = "") => {
     const newSkill: SkillEntry = {
       id: crypto.randomUUID(),
       name: "",
-      category: "Other",
+      category,
     };
     onChange([...skills, newSkill]);
   };
@@ -49,17 +32,24 @@ export function SkillsEditor({ skills, onChange }: SkillsEditorProps) {
     onChange(skills.map((s) => (s.id === id ? { ...s, ...updates } : s)));
   };
 
-  const groupedSkills = skills.reduce(
-    (acc, skill) => {
-      const category = skill.category || "Other";
-      if (!acc[category]) {
-        acc[category] = [];
-      }
-      acc[category].push(skill);
-      return acc;
-    },
-    {} as Record<string, SkillEntry[]>
-  );
+  const groupedSkills = useMemo(() => {
+    return skills.reduce(
+      (acc, skill) => {
+        const category = (skill.category || "").trim();
+        if (!acc[category]) {
+          acc[category] = [];
+        }
+        acc[category].push(skill);
+        return acc;
+      },
+      {} as Record<string, SkillEntry[]>
+    );
+  }, [skills]);
+
+  const handleAddSkill = () => {
+    addSkill(newSkillGroup.trim());
+    setNewSkillGroup("");
+  };
 
   return (
     <div className="space-y-4">
@@ -68,9 +58,20 @@ export function SkillsEditor({ skills, onChange }: SkillsEditorProps) {
           key={category}
           className="space-y-3 rounded-lg border border-border bg-card p-4"
         >
-          <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {category}
-          </h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {category || "Ungrouped"}
+            </h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => addSkill(category)}
+            >
+              <Plus className="mr-1 h-3 w-3" />
+              Add Skill
+            </Button>
+          </div>
           <div className="space-y-2">
             {categorySkills.map((skill) => (
               <div key={skill.id} className="flex items-center gap-2">
@@ -82,23 +83,14 @@ export function SkillsEditor({ skills, onChange }: SkillsEditorProps) {
                   placeholder="Skill name"
                   className="h-8 flex-1"
                 />
-                <Select
+                <Input
                   value={skill.category}
-                  onValueChange={(value) =>
-                    updateSkill(skill.id, { category: value })
+                  onChange={(e) =>
+                    updateSkill(skill.id, { category: e.target.value })
                   }
-                >
-                  <SelectTrigger className="h-8 w-[140px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SKILL_CATEGORIES.map((cat) => (
-                      <SelectItem key={cat} value={cat}>
-                        {cat}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  placeholder="Group (optional)"
+                  className="h-8 w-[160px]"
+                />
                 <Button
                   variant="ghost"
                   size="icon"
@@ -123,7 +115,13 @@ export function SkillsEditor({ skills, onChange }: SkillsEditorProps) {
 
       <div className="space-y-3 rounded-lg border border-border bg-card p-4">
         <Label className="text-xs text-muted-foreground">Add New Skill</Label>
-        <Button variant="outline" className="w-full" onClick={addSkill}>
+        <Input
+          value={newSkillGroup}
+          onChange={(e) => setNewSkillGroup(e.target.value)}
+          placeholder="Group name (optional)"
+          className="h-9"
+        />
+        <Button variant="outline" className="w-full" onClick={handleAddSkill}>
           <Plus className="mr-2 h-4 w-4" />
           Add Skill
         </Button>

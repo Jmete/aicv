@@ -21,6 +21,12 @@ export function ResumeEditorPanel({
   resumeData,
   onResumeUpdate,
 }: ResumeEditorPanelProps) {
+  const layoutPreferences = resumeData.layoutPreferences ?? {
+    experienceOrder: "title-first",
+    educationOrder: "degree-first",
+    sectionOrder: ["summary", "experience", "projects", "education", "skills"],
+  };
+
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-border p-4">
@@ -78,12 +84,22 @@ export function ResumeEditorPanel({
                   onResumeUpdate({ ...resumeData, pageSettings })
                 }
               />
-              <SectionVisibility
-                visibility={resumeData.sectionVisibility}
-                onChange={(sectionVisibility) =>
-                  onResumeUpdate({ ...resumeData, sectionVisibility })
-                }
-              />
+          <SectionVisibility
+            visibility={resumeData.sectionVisibility}
+            order={layoutPreferences.sectionOrder}
+            onOrderChange={(sectionOrder) =>
+              onResumeUpdate({
+                ...resumeData,
+                layoutPreferences: {
+                  ...layoutPreferences,
+                  sectionOrder,
+                },
+              })
+            }
+            onChange={(sectionVisibility) =>
+              onResumeUpdate({ ...resumeData, sectionVisibility })
+            }
+          />
               <MetadataEditor
                 metadata={resumeData.metadata}
                 onChange={(metadata) =>
@@ -96,6 +112,16 @@ export function ResumeEditorPanel({
           <TabsContent value="work" className="m-0 p-4">
             <ExperienceEditor
               experience={resumeData.experience}
+              order={layoutPreferences.experienceOrder}
+              onOrderChange={(experienceOrder) =>
+                onResumeUpdate({
+                  ...resumeData,
+                  layoutPreferences: {
+                    ...layoutPreferences,
+                    experienceOrder,
+                  },
+                })
+              }
               onChange={(experience) =>
                 onResumeUpdate({ ...resumeData, experience })
               }
@@ -114,6 +140,16 @@ export function ResumeEditorPanel({
           <TabsContent value="education" className="m-0 p-4">
             <EducationEditor
               education={resumeData.education}
+              order={layoutPreferences.educationOrder}
+              onOrderChange={(educationOrder) =>
+                onResumeUpdate({
+                  ...resumeData,
+                  layoutPreferences: {
+                    ...layoutPreferences,
+                    educationOrder,
+                  },
+                })
+              }
               onChange={(education) =>
                 onResumeUpdate({ ...resumeData, education })
               }

@@ -36,6 +36,12 @@ export const DEFAULT_SECTION_VISIBILITY = {
   skills: true,
 };
 
+export const DEFAULT_LAYOUT_PREFERENCES = {
+  experienceOrder: "title-first" as const,
+  educationOrder: "degree-first" as const,
+  sectionOrder: ["summary", "experience", "projects", "education", "skills"],
+};
+
 export const DEFAULT_COVER_LETTER = {
   date: "",
   hiringManager: "",
@@ -60,6 +66,7 @@ export const DEFAULT_RESUME_DATA = {
     summary: "",
   },
   sectionVisibility: DEFAULT_SECTION_VISIBILITY,
+  layoutPreferences: DEFAULT_LAYOUT_PREFERENCES,
   coverLetter: DEFAULT_COVER_LETTER,
   experience: [],
   projects: [],
