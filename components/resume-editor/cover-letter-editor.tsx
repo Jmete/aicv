@@ -38,7 +38,7 @@ export function CoverLetterEditor({
               value={coverLetter.date}
               onChange={(e) => handleChange("date", e.target.value)}
               placeholder="January 1, 2025"
-              className="h-9"
+              className="h-8"
             />
           </div>
 
@@ -54,7 +54,7 @@ export function CoverLetterEditor({
               value={coverLetter.hiringManager}
               onChange={(e) => handleChange("hiringManager", e.target.value)}
               placeholder="Jane Smith"
-              className="h-9"
+              className="h-8"
             />
           </div>
 
@@ -99,7 +99,7 @@ export function CoverLetterEditor({
             value={coverLetter.sendoff}
             onChange={(e) => handleChange("sendoff", e.target.value)}
             placeholder="Best Regards,"
-            className="h-9"
+            className="h-8"
           />
         </div>
       </div>

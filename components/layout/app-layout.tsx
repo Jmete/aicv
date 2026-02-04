@@ -99,8 +99,8 @@ export function AppLayout() {
           />
         </div>
 
-        {/* Resume Editor Panel - 420px */}
-        <div className="w-[420px] shrink-0 border-l border-border">
+        {/* Resume Editor Panel - 460px */}
+        <div className="w-[460px] shrink-0 border-l border-border">
           <ResumeEditorPanel
             resumeData={resumeData}
             onResumeUpdate={handleResumeUpdate}

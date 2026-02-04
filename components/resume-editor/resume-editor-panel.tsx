@@ -7,6 +7,7 @@ import type { ResumeData } from "@/types";
 import { CoverLetterEditor } from "./cover-letter-editor";
 import { EducationEditor } from "./education-editor";
 import { ExperienceEditor } from "./experience-editor";
+import { HeaderAlignmentEditor } from "./header-alignment-editor";
 import { MetadataEditor } from "./metadata-editor";
 import { PageSettings } from "./page-settings";
 import { ProjectsEditor } from "./projects-editor";
@@ -38,7 +39,13 @@ export function ResumeEditorPanel({
     <div className="flex h-full flex-col">
       <Tabs defaultValue="info" className="flex flex-1 flex-col overflow-hidden">
         <div className="flex h-[52px] items-center border-b border-border px-4">
-          <TabsList className="grid h-full w-full grid-cols-6 bg-transparent p-0">
+          <TabsList className="grid h-full w-full grid-cols-7 bg-transparent p-0">
+            <TabsTrigger
+              value="layout"
+              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+            >
+              Layout
+            </TabsTrigger>
             <TabsTrigger
               value="info"
               className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
@@ -81,6 +88,27 @@ export function ResumeEditorPanel({
         <ScrollArea className="flex-1">
           <TabsContent value="info" className="m-0 p-4">
             <div className="space-y-4">
+              <MetadataEditor
+                metadata={resumeData.metadata}
+                contactOrder={layoutPreferences.contactOrder}
+                onChange={(metadata) =>
+                  onResumeUpdate({ ...resumeData, metadata })
+                }
+                onContactOrderChange={(contactOrder) =>
+                  onResumeUpdate({
+                    ...resumeData,
+                    layoutPreferences: {
+                      ...layoutPreferences,
+                      contactOrder,
+                    },
+                  })
+                }
+              />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="layout" className="m-0 p-4">
+            <div className="space-y-4">
               <PageSettings
                 settings={resumeData.pageSettings}
                 onChange={(pageSettings) =>
@@ -103,23 +131,9 @@ export function ResumeEditorPanel({
                   onResumeUpdate({ ...resumeData, sectionVisibility })
                 }
               />
-              <MetadataEditor
-                metadata={resumeData.metadata}
-                headerAlignment={layoutPreferences.headerAlignment}
-                contactOrder={layoutPreferences.contactOrder}
-                onChange={(metadata) =>
-                  onResumeUpdate({ ...resumeData, metadata })
-                }
-                onContactOrderChange={(contactOrder) =>
-                  onResumeUpdate({
-                    ...resumeData,
-                    layoutPreferences: {
-                      ...layoutPreferences,
-                      contactOrder,
-                    },
-                  })
-                }
-                onHeaderAlignmentChange={(headerAlignment) =>
+              <HeaderAlignmentEditor
+                alignment={layoutPreferences.headerAlignment}
+                onChange={(headerAlignment) =>
                   onResumeUpdate({
                     ...resumeData,
                     layoutPreferences: {

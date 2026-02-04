@@ -97,7 +97,7 @@ export function EducationEditor({
                 updateEntry(entry.id, { institution: e.target.value })
               }
               placeholder="University Name"
-              className="h-9"
+              className="h-8"
             />
           </div>
 
@@ -109,7 +109,7 @@ export function EducationEditor({
                 updateEntry(entry.id, { degree: e.target.value })
               }
               placeholder="Masters of Applied Data Science"
-              className="h-9"
+              className="h-8"
             />
           </div>
 
@@ -124,7 +124,7 @@ export function EducationEditor({
                   updateEntry(entry.id, { location: e.target.value })
                 }
                 placeholder="Boston, MA"
-                className="h-9"
+                className="h-8"
               />
             </div>
 
@@ -138,7 +138,7 @@ export function EducationEditor({
                   updateEntry(entry.id, { gpa: e.target.value })
                 }
                 placeholder="3.8"
-                className="h-9"
+                className="h-8"
               />
             </div>
           </div>

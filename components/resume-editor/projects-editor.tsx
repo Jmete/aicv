@@ -119,7 +119,7 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
               value={entry.name}
               onChange={(e) => updateEntry(entry.id, { name: e.target.value })}
               placeholder="My Awesome Project"
-              className="h-9"
+              className="h-8"
             />
           </div>
 
@@ -145,7 +145,7 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
                 handleTechnologiesChange(entry.id, e.target.value)
               }
               placeholder="React, TypeScript, Node.js"
-              className="h-9"
+              className="h-8"
             />
           </div>
 

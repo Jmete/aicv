@@ -119,7 +119,7 @@ export function SkillsEditor({ skills, onChange }: SkillsEditorProps) {
           value={newSkillGroup}
           onChange={(e) => setNewSkillGroup(e.target.value)}
           placeholder="Group name (optional)"
-          className="h-9"
+          className="h-8"
         />
         <Button variant="outline" className="w-full" onClick={handleAddSkill}>
           <Plus className="mr-2 h-4 w-4" />

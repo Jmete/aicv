@@ -125,7 +125,7 @@ export function ExperienceEditor({
                   updateEntry(entry.id, { company: e.target.value })
                 }
                 placeholder="Company Name"
-                className="h-9"
+                className="h-8"
               />
             </div>
 
@@ -137,7 +137,7 @@ export function ExperienceEditor({
                   updateEntry(entry.id, { jobTitle: e.target.value })
                 }
                 placeholder="Software Engineer"
-                className="h-9"
+                className="h-8"
               />
             </div>
           </div>
@@ -150,7 +150,7 @@ export function ExperienceEditor({
                 updateEntry(entry.id, { location: e.target.value })
               }
               placeholder="San Francisco, CA"
-              className="h-9"
+              className="h-8"
             />
           </div>
 
@@ -163,7 +163,7 @@ export function ExperienceEditor({
                   updateEntry(entry.id, { startDate: e.target.value })
                 }
                 placeholder="Jan 2022"
-                className="h-9"
+                className="h-8"
               />
             </div>
 
@@ -175,7 +175,7 @@ export function ExperienceEditor({
                   updateEntry(entry.id, { endDate: e.target.value })
                 }
                 placeholder="Present"
-                className="h-9"
+                className="h-8"
               />
             </div>
           </div>

@@ -4,14 +4,8 @@ import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type {
-  ContactFieldKey,
-  HeaderAlignment,
-  ResumeMetadata,
-  TextAlignment,
-} from "@/types";
-import { AlignCenter, AlignLeft, AlignRight, GripVertical } from "lucide-react";
+import type { ContactFieldKey, ResumeMetadata } from "@/types";
+import { GripVertical } from "lucide-react";
 
 const CONTACT_FIELDS = [
   {
@@ -63,20 +57,16 @@ type ContactGroup = ContactFieldConfig["group"];
 
 interface MetadataEditorProps {
   metadata: ResumeMetadata;
-  headerAlignment: HeaderAlignment;
   contactOrder: ContactFieldKey[];
   onChange: (metadata: ResumeMetadata) => void;
   onContactOrderChange: (order: ContactFieldKey[]) => void;
-  onHeaderAlignmentChange: (alignment: HeaderAlignment) => void;
 }
 
 export function MetadataEditor({
   metadata,
-  headerAlignment,
   contactOrder,
   onChange,
   onContactOrderChange,
-  onHeaderAlignmentChange,
 }: MetadataEditorProps) {
   const [dragging, setDragging] = useState<ContactFieldKey | null>(null);
 
@@ -120,16 +110,6 @@ export function MetadataEditor({
     });
   };
 
-  const updateAlignment = (
-    field: keyof HeaderAlignment,
-    value: TextAlignment
-  ) => {
-    onHeaderAlignmentChange({
-      ...headerAlignment,
-      [field]: value,
-    });
-  };
-
   const handleContactDrop = (target: ContactFieldKey) => {
     if (!dragging || dragging === target) return;
     const next = orderedContactFields.filter((key) => key !== dragging);
@@ -138,45 +118,6 @@ export function MetadataEditor({
     onContactOrderChange(next);
     setDragging(null);
   };
-
-  const AlignmentRow = ({
-    label,
-    value,
-    onValueChange,
-  }: {
-    label: string;
-    value: TextAlignment;
-    onValueChange: (value: TextAlignment) => void;
-  }) => (
-    <div className="flex items-center justify-between gap-3">
-      <Label className="text-xs text-muted-foreground">{label}</Label>
-      <ToggleGroup
-        type="single"
-        value={value}
-        onValueChange={(nextValue) => {
-          if (!nextValue) return;
-          onValueChange(nextValue as TextAlignment);
-        }}
-        variant="outline"
-        size="sm"
-        className="justify-end"
-        aria-label={`${label} alignment`}
-      >
-        <ToggleGroupItem value="left" className="h-7 px-2 text-[11px]">
-          <AlignLeft className="h-3.5 w-3.5" />
-          Left
-        </ToggleGroupItem>
-        <ToggleGroupItem value="center" className="h-7 px-2 text-[11px]">
-          <AlignCenter className="h-3.5 w-3.5" />
-          Center
-        </ToggleGroupItem>
-        <ToggleGroupItem value="right" className="h-7 px-2 text-[11px]">
-          <AlignRight className="h-3.5 w-3.5" />
-          Right
-        </ToggleGroupItem>
-      </ToggleGroup>
-    </div>
-  );
 
   return (
     <div className="space-y-6">
@@ -195,7 +136,7 @@ export function MetadataEditor({
               value={metadata.fullName}
               onChange={(e) => handleFieldChange("fullName", e.target.value)}
               placeholder="John Doe"
-              className="h-9"
+              className="h-8"
             />
           </div>
 
@@ -208,7 +149,7 @@ export function MetadataEditor({
               value={metadata.subtitle}
               onChange={(e) => handleFieldChange("subtitle", e.target.value)}
               placeholder="Software Engineer | Full Stack Developer"
-              className="h-9"
+              className="h-8"
             />
           </div>
 
@@ -266,7 +207,7 @@ export function MetadataEditor({
                             handleContactChange(key, e.target.value)
                           }
                           placeholder={field.placeholder}
-                          className="h-9"
+                          className="h-8"
                         />
                       </div>
                     </div>
@@ -275,35 +216,6 @@ export function MetadataEditor({
               });
             })()}
           </div>
-        </div>
-      </div>
-
-      <div className="space-y-4 rounded-lg border border-border bg-card p-4">
-        <div className="space-y-1">
-          <h3 className="text-sm font-medium text-foreground">
-            Header Alignment
-          </h3>
-          <p className="text-xs text-muted-foreground">
-            Align each line at the top of your resume.
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          <AlignmentRow
-            label="Name"
-            value={headerAlignment.name}
-            onValueChange={(value) => updateAlignment("name", value)}
-          />
-          <AlignmentRow
-            label="Subtitle"
-            value={headerAlignment.subtitle}
-            onValueChange={(value) => updateAlignment("subtitle", value)}
-          />
-          <AlignmentRow
-            label="Contact"
-            value={headerAlignment.contact}
-            onValueChange={(value) => updateAlignment("contact", value)}
-          />
         </div>
       </div>
 
