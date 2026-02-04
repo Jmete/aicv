@@ -214,6 +214,12 @@ export function ResumeViewer({
     };
   }, [pageSettings]);
 
+  const paperMaxWidth = useMemo(() => {
+    const { width } = PAPER_DIMENSIONS[pageSettings.paperSize];
+    const pxPerMm = 72 / 25.4;
+    return `${width * pxPerMm}px`;
+  }, [pageSettings.paperSize]);
+
   const { groupedSkills, ungroupedSkills } = useMemo(() => {
     const grouped: Record<string, SkillEntry[]> = {};
     const ungrouped: SkillEntry[] = [];
@@ -1709,7 +1715,11 @@ export function ResumeViewer({
 
         <ScrollArea className="flex-1">
           <div className="flex justify-center p-8">
-            <TabsContent value="resume" className="mt-0 w-full max-w-[612px]">
+            <TabsContent
+              value="resume"
+              className="mt-0 w-full"
+              style={{ maxWidth: paperMaxWidth }}
+            >
               <div
                 ref={resumePagination.containerRef}
                 className="resume-pages flex flex-col gap-8"
@@ -1744,7 +1754,8 @@ export function ResumeViewer({
 
             <TabsContent
               value="cover-letter"
-              className="mt-0 w-full max-w-[612px]"
+              className="mt-0 w-full"
+              style={{ maxWidth: paperMaxWidth }}
             >
               <div
                 ref={coverLetterPagination.containerRef}
