@@ -181,9 +181,20 @@ export function ExperienceEditor({
           </div>
 
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">
-              Responsibilities & Achievements
-            </Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs text-muted-foreground">
+                Responsibilities & Achievements
+              </Label>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => addBullet(entry.id)}
+              >
+                <Plus className="mr-1 h-3 w-3" />
+                Add Bullet
+              </Button>
+            </div>
             {entry.bullets.map((bullet, bulletIndex) => (
               <div key={bulletIndex} className="flex gap-2">
                 <Textarea
@@ -206,15 +217,6 @@ export function ExperienceEditor({
                 )}
               </div>
             ))}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => addBullet(entry.id)}
-            >
-              <Plus className="mr-1 h-3 w-3" />
-              Add Bullet
-            </Button>
           </div>
         </div>
       ))}

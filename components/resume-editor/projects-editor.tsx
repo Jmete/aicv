@@ -46,7 +46,7 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
       name: "",
       description: "",
       technologies: [],
-      bullets: [""],
+      bullets: [],
     };
     onChange([...projects, newEntry]);
   };
@@ -77,7 +77,7 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
 
   const removeBullet = (entryId: string, bulletIndex: number) => {
     const entry = projects.find((p) => p.id === entryId);
-    if (!entry || entry.bullets.length <= 1) return;
+    if (!entry) return;
 
     const newBullets = entry.bullets.filter((_, i) => i !== bulletIndex);
     updateEntry(entryId, { bullets: newBullets });
@@ -150,7 +150,20 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
           </div>
 
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">Key Features</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs text-muted-foreground">
+                Bullet Points
+              </Label>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => addBullet(entry.id)}
+              >
+                <Plus className="mr-1 h-3 w-3" />
+                Add Bullet
+              </Button>
+            </div>
             {entry.bullets.map((bullet, bulletIndex) => (
               <div key={bulletIndex} className="flex gap-2">
                 <Textarea
@@ -158,10 +171,10 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
                   onChange={(e) =>
                     updateBullet(entry.id, bulletIndex, e.target.value)
                   }
-                  placeholder="Describe a key feature or achievement..."
+                  placeholder="Describe a bullet point..."
                   className="min-h-[60px] resize-none"
                 />
-                {entry.bullets.length > 1 && (
+                {entry.bullets.length > 0 && (
                   <Button
                     variant="ghost"
                     size="icon"
@@ -173,15 +186,6 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
                 )}
               </div>
             ))}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => addBullet(entry.id)}
-            >
-              <Plus className="mr-1 h-3 w-3" />
-              Add Bullet
-            </Button>
           </div>
         </div>
       ))}

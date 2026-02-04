@@ -10,9 +10,11 @@ import {
 import type { ClipboardEvent, KeyboardEvent } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
 import { PAPER_DIMENSIONS } from "@/lib/resume-defaults";
 import { cn } from "@/lib/utils";
 import type { ResumeData, SectionKey, SkillEntry } from "@/types";
+import { Plus, Trash2 } from "lucide-react";
 
 interface ResumeViewerProps {
   resumeData: ResumeData;
@@ -137,7 +139,6 @@ export function ResumeViewer({
     skills.forEach((skill) => {
       const name = skill.name.trim();
       const category = (skill.category || "").trim();
-      if (!name && !category) return;
 
       if (category) {
         if (!grouped[category]) {
@@ -306,6 +307,106 @@ export function ResumeViewer({
       .map((item) => item.trim())
       .filter(Boolean);
 
+  const addExperienceEntry = () => {
+    const newEntry: ResumeData["experience"][number] = {
+      id: crypto.randomUUID(),
+      company: "",
+      jobTitle: "",
+      location: "",
+      startDate: "",
+      endDate: "",
+      bullets: [],
+    };
+    onResumeUpdate({ ...resumeData, experience: [...experience, newEntry] });
+  };
+
+  const removeExperienceEntry = (entryId: string) => {
+    onResumeUpdate({
+      ...resumeData,
+      experience: experience.filter((entry) => entry.id !== entryId),
+    });
+  };
+
+  const addExperienceBullet = (entryId: string) => {
+    const entry = experience.find((item) => item.id === entryId);
+    if (!entry) return;
+    updateExperienceEntry(entryId, { bullets: [...entry.bullets, ""] });
+  };
+
+  const removeExperienceBullet = (entryId: string, bulletIndex: number) => {
+    const entry = experience.find((item) => item.id === entryId);
+    if (!entry) return;
+    const nextBullets = entry.bullets.filter((_, idx) => idx !== bulletIndex);
+    updateExperienceEntry(entryId, { bullets: nextBullets });
+  };
+
+  const addProjectEntry = () => {
+    const newEntry: ResumeData["projects"][number] = {
+      id: crypto.randomUUID(),
+      name: "",
+      description: "",
+      technologies: [],
+      bullets: [],
+    };
+    onResumeUpdate({ ...resumeData, projects: [...projects, newEntry] });
+  };
+
+  const removeProjectEntry = (projectId: string) => {
+    onResumeUpdate({
+      ...resumeData,
+      projects: projects.filter((project) => project.id !== projectId),
+    });
+  };
+
+  const addProjectBullet = (projectId: string) => {
+    const project = projects.find((item) => item.id === projectId);
+    if (!project) return;
+    updateProjectEntry(projectId, { bullets: [...project.bullets, ""] });
+  };
+
+  const removeProjectBullet = (projectId: string, bulletIndex: number) => {
+    const project = projects.find((item) => item.id === projectId);
+    if (!project) return;
+    const nextBullets = project.bullets.filter((_, idx) => idx !== bulletIndex);
+    updateProjectEntry(projectId, { bullets: nextBullets });
+  };
+
+  const addEducationEntry = () => {
+    const newEntry: ResumeData["education"][number] = {
+      id: crypto.randomUUID(),
+      degree: "",
+      institution: "",
+      location: "",
+      field: "",
+      graduationDate: "",
+      gpa: "",
+    };
+    onResumeUpdate({ ...resumeData, education: [...education, newEntry] });
+  };
+
+  const removeEducationEntry = (entryId: string) => {
+    onResumeUpdate({
+      ...resumeData,
+      education: education.filter((entry) => entry.id !== entryId),
+    });
+  };
+
+  const addSkill = (category = "") => {
+    const newSkill: ResumeData["skills"][number] = {
+      id: crypto.randomUUID(),
+      name: "",
+      category,
+    };
+    onResumeUpdate({ ...resumeData, skills: [...skills, newSkill] });
+  };
+
+  const removeSkill = (skillId: string) => {
+    onResumeUpdate({
+      ...resumeData,
+      skills: skills.filter((skill) => skill.id !== skillId),
+    });
+  };
+
   const renderSummary = () => {
     if (!sectionVisibility.summary) return null;
     return (
@@ -326,12 +427,23 @@ export function ResumeViewer({
 
   const renderExperience = () => {
     if (!sectionVisibility.experience) return null;
-    if (hasExperience) {
-      return (
-        <div>
-          <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
+    return (
+      <div>
+        <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
+          <h2 className="text-sm font-bold uppercase tracking-wide">
             Experience
           </h2>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+            onClick={addExperienceEntry}
+          >
+            <Plus className="h-3 w-3" />
+            Add Experience
+          </Button>
+        </div>
+        {hasExperience ? (
           <div className="mt-2 space-y-3">
             {experience.map((entry) => {
               const primaryField =
@@ -344,8 +456,8 @@ export function ResumeViewer({
                 experienceOrder === "title-first" ? "Company Name" : "Job Title";
 
               return (
-                <div key={entry.id}>
-                  <div className="flex justify-between">
+                <div key={entry.id} className="group space-y-1">
+                  <div className="flex items-start justify-between gap-2">
                     <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                       <EditableText
                         value={entry[primaryField]}
@@ -357,23 +469,36 @@ export function ResumeViewer({
                         placeholder={primaryFallback}
                       />
                     </span>
-                    <span className="text-sm text-gray-600 dark:text-gray-400">
-                      <EditableText
-                        value={entry.startDate}
-                        onChange={(value) =>
-                          updateExperienceEntry(entry.id, { startDate: value })
-                        }
-                        placeholder="Start"
-                      />
-                      <span className="mx-1">-</span>
-                      <EditableText
-                        value={entry.endDate}
-                        onChange={(value) =>
-                          updateExperienceEntry(entry.id, { endDate: value })
-                        }
-                        placeholder="Present"
-                      />
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-600 dark:text-gray-400">
+                        <EditableText
+                          value={entry.startDate}
+                          onChange={(value) =>
+                            updateExperienceEntry(entry.id, {
+                              startDate: value,
+                            })
+                          }
+                          placeholder="Start"
+                        />
+                        <span className="mx-1">-</span>
+                        <EditableText
+                          value={entry.endDate}
+                          onChange={(value) =>
+                            updateExperienceEntry(entry.id, { endDate: value })
+                          }
+                          placeholder="Present"
+                        />
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+                        onClick={() => removeExperienceEntry(entry.id)}
+                        aria-label="Remove experience"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </div>
                   <p className="text-sm text-gray-700 dark:text-gray-300">
                     <EditableText
@@ -397,7 +522,7 @@ export function ResumeViewer({
                   {entry.bullets.length > 0 && (
                     <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
                       {entry.bullets.map((bullet, idx) => (
-                        <li key={idx}>
+                        <li key={idx} className="group/bullet">
                           <EditableText
                             value={bullet}
                             onChange={(value) =>
@@ -405,50 +530,94 @@ export function ResumeViewer({
                             }
                             placeholder="Describe your accomplishment..."
                           />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="ml-1 h-4 w-4 text-muted-foreground opacity-0 transition group-hover/bullet:opacity-100 hover:text-destructive"
+                            onClick={() =>
+                              removeExperienceBullet(entry.id, idx)
+                            }
+                            aria-label="Remove bullet"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
                         </li>
                       ))}
                     </ul>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                    onClick={() => addExperienceBullet(entry.id)}
+                  >
+                    <Plus className="h-3 w-3" />
+                    Add Bullet
+                  </Button>
                 </div>
               );
             })}
           </div>
-        </div>
-      );
-    }
-
-    return (
-      <div>
-        <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-          Experience
-        </h2>
-        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
-          Add experience entries in the editor panel...
-        </p>
+        ) : (
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
+            Add experience entries using the button above.
+          </p>
+        )}
       </div>
     );
   };
 
   const renderProjects = () => {
-    if (!sectionVisibility.projects || !hasProjects) return null;
+    if (!sectionVisibility.projects || !hasProjects) {
+      return sectionVisibility.projects ? (
+        <div>
+          <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
+            <h2 className="text-sm font-bold uppercase tracking-wide">Projects</h2>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={addProjectEntry}
+            >
+              <Plus className="h-3 w-3" />
+              Add Project
+            </Button>
+          </div>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
+            Add project entries using the button above.
+          </p>
+        </div>
+      ) : null;
+    }
+
     return (
       <div>
-        <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-          Projects
-        </h2>
+        <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
+          <h2 className="text-sm font-bold uppercase tracking-wide">Projects</h2>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+            onClick={addProjectEntry}
+          >
+            <Plus className="h-3 w-3" />
+            Add Project
+          </Button>
+        </div>
         <div className="mt-2 space-y-3">
           {projects.map((project) => (
-              <div key={project.id}>
-                <div className="flex justify-between items-baseline gap-2">
-                  <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                    <EditableText
-                      value={project.name}
-                      onChange={(value) =>
-                        updateProjectEntry(project.id, { name: value })
-                      }
-                      placeholder="Project Name"
-                    />
-                  </span>
+            <div key={project.id} className="group space-y-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  <EditableText
+                    value={project.name}
+                    onChange={(value) =>
+                      updateProjectEntry(project.id, { name: value })
+                    }
+                    placeholder="Project Name"
+                  />
+                </span>
+                <div className="flex items-center gap-2">
                   <span className="text-xs text-gray-500 dark:text-gray-400">
                     <EditableText
                       value={project.technologies.join(", ")}
@@ -460,45 +629,107 @@ export function ResumeViewer({
                       placeholder="Technologies"
                     />
                   </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+                    onClick={() => removeProjectEntry(project.id)}
+                    aria-label="Remove project"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
                 </div>
-                <EditableText
-                  value={project.description}
-                  onChange={(value) =>
-                    updateProjectEntry(project.id, { description: value })
-                  }
-                  placeholder="Project description"
-                  className="text-sm text-gray-700 dark:text-gray-300"
-                  multiline
-                />
-                {project.bullets.length > 0 && (
-                  <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
-                    {project.bullets.map((bullet, idx) => (
-                      <li key={idx}>
-                        <EditableText
-                          value={bullet}
-                          onChange={(value) =>
-                            updateProjectBullet(project.id, idx, value)
-                          }
-                          placeholder="Project impact..."
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </div>
-            ))}
+              <EditableText
+                value={project.description}
+                onChange={(value) =>
+                  updateProjectEntry(project.id, { description: value })
+                }
+                placeholder="Project description"
+                className="text-sm text-gray-700 dark:text-gray-300"
+                multiline
+              />
+              {project.bullets.length > 0 && (
+                <ul className="mt-1 list-inside list-disc text-sm text-gray-600 dark:text-gray-400">
+                  {project.bullets.map((bullet, idx) => (
+                    <li key={idx} className="group/bullet">
+                      <EditableText
+                        value={bullet}
+                        onChange={(value) =>
+                          updateProjectBullet(project.id, idx, value)
+                        }
+                        placeholder="Project impact..."
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="ml-1 h-4 w-4 text-muted-foreground opacity-0 transition group-hover/bullet:opacity-100 hover:text-destructive"
+                        onClick={() => removeProjectBullet(project.id, idx)}
+                        aria-label="Remove bullet"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+                onClick={() => addProjectBullet(project.id)}
+              >
+                <Plus className="h-3 w-3" />
+                Add Bullet
+              </Button>
+            </div>
+          ))}
         </div>
       </div>
     );
   };
 
   const renderEducation = () => {
-    if (!sectionVisibility.education || !hasEducation) return null;
+    if (!sectionVisibility.education || !hasEducation) {
+      return sectionVisibility.education ? (
+        <div>
+          <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
+            <h2 className="text-sm font-bold uppercase tracking-wide">
+              Education
+            </h2>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={addEducationEntry}
+            >
+              <Plus className="h-3 w-3" />
+              Add Education
+            </Button>
+          </div>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
+            Add education entries using the button above.
+          </p>
+        </div>
+      ) : null;
+    }
+
     return (
       <div>
-        <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-          Education
-        </h2>
+        <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
+          <h2 className="text-sm font-bold uppercase tracking-wide">
+            Education
+          </h2>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+            onClick={addEducationEntry}
+          >
+            <Plus className="h-3 w-3" />
+            Add Education
+          </Button>
+        </div>
         <div className="mt-2 space-y-3">
           {education.map((entry) => {
             const primaryField =
@@ -515,18 +746,29 @@ export function ResumeViewer({
                 : "Degree";
 
             return (
-              <div key={entry.id}>
-                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                  <EditableText
-                    value={entry[primaryField] ?? ""}
-                    onChange={(value) =>
-                      updateEducationEntry(entry.id, {
-                        [primaryField]: value,
-                      } as Partial<ResumeData["education"][number]>)
-                    }
-                    placeholder={primaryFallback}
-                  />
-                </p>
+              <div key={entry.id} className="group space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    <EditableText
+                      value={entry[primaryField] ?? ""}
+                      onChange={(value) =>
+                        updateEducationEntry(entry.id, {
+                          [primaryField]: value,
+                        } as Partial<ResumeData["education"][number]>)
+                      }
+                      placeholder={primaryFallback}
+                    />
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+                    onClick={() => removeEducationEntry(entry.id)}
+                    aria-label="Remove education"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
                 <p className="text-sm text-gray-700 dark:text-gray-300">
                   <EditableText
                     value={entry[secondaryField] ?? ""}
@@ -573,71 +815,115 @@ export function ResumeViewer({
 
   const renderSkills = () => {
     if (!sectionVisibility.skills) return null;
-    if (hasSkills) {
-      return (
-        <div>
-          <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-            Skills
-          </h2>
-          <div className="mt-2 space-y-1">
-            {Object.entries(groupedSkills).map(
-              ([category, categorySkills]) => (
-                <p
-                  key={category}
-                  className="text-sm text-gray-700 dark:text-gray-300"
-                >
-                  <span className="font-semibold">
-                    <EditableText
-                      value={category}
-                      onChange={(value) => updateSkillCategory(category, value)}
-                      placeholder="Category"
-                    />
-                    :
-                  </span>{" "}
-                  {categorySkills.map((skill, index) => (
-                    <Fragment key={skill.id}>
-                      <EditableText
-                        value={skill.name}
-                        onChange={(value) =>
-                          updateSkill(skill.id, { name: value })
-                        }
-                        placeholder="Skill"
-                      />
-                      {index < categorySkills.length - 1 && ", "}
-                    </Fragment>
-                  ))}
-                </p>
-              )
-            )}
-            {ungroupedSkills.length > 0 && (
-              <p className="text-sm text-gray-700 dark:text-gray-300">
-                {ungroupedSkills.map((skill, index) => (
-                  <Fragment key={skill.id}>
-                    <EditableText
-                      value={skill.name}
-                      onChange={(value) =>
-                        updateSkill(skill.id, { name: value })
-                      }
-                      placeholder="Skill"
-                    />
-                    {index < ungroupedSkills.length - 1 && ", "}
-                  </Fragment>
-                ))}
-              </p>
-            )}
-          </div>
-        </div>
-      );
-    }
+    const renderSkillItem = (skill: SkillEntry) => (
+      <span className="inline-flex items-center gap-1 group/skill">
+        <EditableText
+          value={skill.name}
+          onChange={(value) => updateSkill(skill.id, { name: value })}
+          placeholder="Skill"
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-4 w-4 text-muted-foreground opacity-0 transition group-hover/skill:opacity-100 hover:text-destructive"
+          onClick={() => removeSkill(skill.id)}
+          aria-label="Remove skill"
+        >
+          <Trash2 className="h-3 w-3" />
+        </Button>
+      </span>
+    );
 
     return (
       <div>
-        <h2 className="border-b border-gray-300 pb-1 text-sm font-bold uppercase tracking-wide text-gray-900 dark:text-gray-100 dark:border-gray-700">
-          Skills
-        </h2>
-        <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
-          Add skills in the editor panel...
-        </p>
+        <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
+          <h2 className="text-sm font-bold uppercase tracking-wide">Skills</h2>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={() => addSkill("")}
+            >
+              <Plus className="h-3 w-3" />
+              Add Skill
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={() => addSkill("New Category")}
+            >
+              <Plus className="h-3 w-3" />
+              Add Group
+            </Button>
+          </div>
+        </div>
+        {hasSkills ? (
+          <div className="mt-2 space-y-1">
+            {Object.entries(groupedSkills).map(
+              ([category, categorySkills]) => (
+                <div
+                  key={category}
+                  className="flex items-start justify-between gap-2"
+                >
+                  <p className="text-sm text-gray-700 dark:text-gray-300">
+                    <span className="font-semibold">
+                      <EditableText
+                        value={category}
+                        onChange={(value) =>
+                          updateSkillCategory(category, value)
+                        }
+                        placeholder="Category"
+                      />
+                      :
+                    </span>{" "}
+                    {categorySkills.map((skill, index) => (
+                      <Fragment key={skill.id}>
+                        {renderSkillItem(skill)}
+                        {index < categorySkills.length - 1 && ", "}
+                      </Fragment>
+                    ))}
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    onClick={() => addSkill(category)}
+                    aria-label={`Add skill to ${category}`}
+                  >
+                    <Plus className="h-3 w-3" />
+                  </Button>
+                </div>
+              )
+            )}
+            {ungroupedSkills.length > 0 && (
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm text-gray-700 dark:text-gray-300">
+                  {ungroupedSkills.map((skill, index) => (
+                    <Fragment key={skill.id}>
+                      {renderSkillItem(skill)}
+                      {index < ungroupedSkills.length - 1 && ", "}
+                    </Fragment>
+                  ))}
+                </p>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                  onClick={() => addSkill("")}
+                  aria-label="Add skill"
+                >
+                  <Plus className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 italic">
+            Add skills using the buttons above.
+          </p>
+        )}
       </div>
     );
   };
