@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { ContactFieldKey, ResumeMetadata } from "@/types";
 import { GripVertical } from "lucide-react";
+import { SectionAiHeader } from "./section-ai-header";
 
 const CONTACT_FIELDS = [
   {
@@ -220,9 +221,7 @@ export function MetadataEditor({
       </div>
 
       <div className="space-y-4 rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-medium text-foreground">
-          Professional Summary
-        </h3>
+        <SectionAiHeader title="Professional Summary" section="summary" />
 
         <div className="space-y-2">
           <Label htmlFor="summary" className="text-xs text-muted-foreground">

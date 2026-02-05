@@ -16,7 +16,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DEFAULT_LAYOUT_PREFERENCES, PAPER_DIMENSIONS } from "@/lib/resume-defaults";
-import { applyReplacementTemplate } from "@/lib/resume-analysis";
+import {
+  applyReplacementTemplate,
+  parseFieldPath,
+  setResumeValueAtPath,
+} from "@/lib/resume-analysis";
 import { cn } from "@/lib/utils";
 import type {
   ContactFieldKey,
@@ -34,6 +38,8 @@ import {
   AlignRight,
   AlertCircle,
   Check,
+  ChevronDown,
+  ChevronUp,
   Loader2,
   Plus,
   Sparkles,
@@ -112,6 +118,7 @@ interface EditableTextProps {
   className?: string;
   style?: CSSProperties;
   multiline?: boolean;
+  fieldPath?: string;
 }
 
 const normalizeText = (value: string, multiline: boolean) => {
@@ -126,6 +133,7 @@ function EditableText({
   className,
   style,
   multiline = false,
+  fieldPath,
 }: EditableTextProps) {
   const ref = useRef<HTMLSpanElement>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -172,6 +180,7 @@ function EditableText({
       style={style}
       contentEditable
       suppressContentEditableWarning
+      data-field-path={fieldPath}
       data-placeholder={placeholder}
       onInput={commit}
       onBlur={() => {
@@ -325,6 +334,7 @@ interface StaticTextProps {
   className?: string;
   style?: CSSProperties;
   multiline?: boolean;
+  fieldPath?: string;
 }
 
 function StaticText({
@@ -332,6 +342,7 @@ function StaticText({
   className,
   style,
   multiline = false,
+  fieldPath,
 }: StaticTextProps) {
   return (
     <span
@@ -342,6 +353,7 @@ function StaticText({
         className
       )}
       style={style}
+      data-field-path={fieldPath}
     >
       {value}
     </span>
@@ -420,6 +432,36 @@ type FieldFeedback = ResumeAnalysisState["fieldFeedback"][number];
 type AiSuggestion = {
   original: string;
   replacement: string;
+};
+
+type SelectedField = {
+  path: string;
+  text: string;
+};
+
+type BulkOperation = {
+  id: string;
+  op: "replace" | "delete" | "insert";
+  path: string;
+  value: string;
+  index: number;
+  itemType:
+    | "text"
+    | "bullet"
+    | "technology"
+    | "experience"
+    | "project"
+    | "education"
+    | "skill"
+    | "none";
+};
+
+const SECTION_LABELS: Record<SectionKey, string> = {
+  summary: "Summary",
+  experience: "Experience",
+  projects: "Projects",
+  education: "Education",
+  skills: "Skills",
 };
 
 interface QualityIndicatorProps {
@@ -769,11 +811,29 @@ export function ResumeViewer({
   );
   const [aiLoading, setAiLoading] = useState<Record<string, boolean>>({});
   const [aiErrors, setAiErrors] = useState<Record<string, string>>({});
+  const [selectionState, setSelectionState] = useState<{
+    fields: SelectedField[];
+    rect: DOMRect;
+  } | null>(null);
+  const [bulkFields, setBulkFields] = useState<SelectedField[]>([]);
+  const [bulkOps, setBulkOps] = useState<BulkOperation[]>([]);
+  const [bulkPrompt, setBulkPrompt] = useState("");
+  const [bulkTargetLabel, setBulkTargetLabel] = useState("");
+  const [bulkError, setBulkError] = useState<string | null>(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [isBulkOpen, setIsBulkOpen] = useState(false);
+  const [isBulkCollapsed, setIsBulkCollapsed] = useState(false);
+  const [bulkScope, setBulkScope] = useState<{
+    type: "selection" | "section";
+    section?: SectionKey;
+  }>({ type: "selection" });
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const rawDebugJson = useMemo(
     () => (analysis?.raw ? JSON.stringify(analysis.raw, null, 2) : ""),
     [analysis]
   );
+  const resumeContentRef = useRef<HTMLDivElement>(null);
+  const bulkPanelTop = isDebugOpen ? 120 : 60;
 
   useEffect(() => {
     setTodayFormatted(
@@ -894,6 +954,495 @@ export function ResumeViewer({
     apply(suggestion.replacement);
     clearAiSuggestion(key);
   };
+
+  const clearSelectionState = () => {
+    setSelectionState(null);
+  };
+
+  const collectSelectedFields = useCallback(() => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) {
+      if (!isBulkOpen) {
+        clearSelectionState();
+      }
+      return;
+    }
+
+    const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+    if (!range) return;
+    const container = resumeContentRef.current;
+    if (!container) return;
+    const ancestor = range.commonAncestorContainer;
+    if (!container.contains(ancestor)) {
+      if (!isBulkOpen) {
+        clearSelectionState();
+      }
+      return;
+    }
+
+    const elements = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-field-path]")
+    );
+    const fields: SelectedField[] = [];
+    const seen = new Set<string>();
+
+    for (const element of elements) {
+      if (!range.intersectsNode(element)) continue;
+      const path = element.dataset.fieldPath;
+      if (!path || seen.has(path)) continue;
+      const text = (element.textContent ?? "").trim();
+      fields.push({ path, text });
+      seen.add(path);
+    }
+
+    if (fields.length === 0) {
+      if (!isBulkOpen) {
+        clearSelectionState();
+      }
+      return;
+    }
+
+    const rect = range.getBoundingClientRect();
+    setSelectionState({ fields, rect });
+  }, [isBulkOpen]);
+
+  const clamp = (value: number, min: number, max: number) =>
+    Math.min(Math.max(value, min), max);
+
+  const selectionAnchor = useMemo(() => {
+    if (!selectionState) return null;
+    if (typeof window === "undefined") return null;
+    const rect = selectionState.rect;
+    const padding = 8;
+    const width = 32;
+    const height = 32;
+    const left = clamp(rect.right + padding, 8, window.innerWidth - width - 8);
+    const top = clamp(rect.top - height - padding, 8, window.innerHeight - height - 8);
+    return { left, top };
+  }, [selectionState]);
+
+  const buildSectionFields = useCallback((section: SectionKey): SelectedField[] => {
+    if (section === "summary") {
+      return [
+        {
+          path: "metadata.summary",
+          text: metadata.summary ?? "",
+        },
+      ];
+    }
+    if (section === "experience") {
+      return experience.flatMap((entry, index) => [
+        { path: `experience[${index}].company`, text: entry.company },
+        { path: `experience[${index}].jobTitle`, text: entry.jobTitle },
+        { path: `experience[${index}].location`, text: entry.location },
+        { path: `experience[${index}].startDate`, text: entry.startDate },
+        { path: `experience[${index}].endDate`, text: entry.endDate },
+        ...entry.bullets.map((bullet, bulletIndex) => ({
+          path: `experience[${index}].bullets[${bulletIndex}]`,
+          text: bullet,
+        })),
+      ]);
+    }
+    if (section === "projects") {
+      return projects.flatMap((project, index) => [
+        { path: `projects[${index}].name`, text: project.name },
+        { path: `projects[${index}].description`, text: project.description },
+        {
+          path: `projects[${index}].technologies`,
+          text: project.technologies.join(", "),
+        },
+        ...project.bullets.map((bullet, bulletIndex) => ({
+          path: `projects[${index}].bullets[${bulletIndex}]`,
+          text: bullet,
+        })),
+      ]);
+    }
+    if (section === "education") {
+      return education.flatMap((entry, index) => [
+        { path: `education[${index}].degree`, text: entry.degree },
+        { path: `education[${index}].institution`, text: entry.institution },
+        { path: `education[${index}].location`, text: entry.location },
+        { path: `education[${index}].field`, text: entry.field },
+        { path: `education[${index}].graduationDate`, text: entry.graduationDate },
+        { path: `education[${index}].gpa`, text: entry.gpa },
+      ]);
+    }
+    if (section === "skills") {
+      return skills.flatMap((skill, index) => [
+        { path: `skills[${index}].name`, text: skill.name },
+        { path: `skills[${index}].category`, text: skill.category },
+      ]);
+    }
+    return [];
+  }, [metadata.summary, experience, projects, education, skills]);
+
+  const buildAllowedTargets = (
+    fields: SelectedField[],
+    scope: { type: "selection" | "section"; section?: string }
+  ) => {
+    const allowedPaths = new Set<string>();
+    const allowedDeletes = new Set<string>();
+    const allowedInserts = new Set<string>();
+
+    fields.forEach((field) => {
+      allowedPaths.add(field.path);
+      const experienceMatch = field.path.match(/^experience\[(\d+)\]/);
+      if (experienceMatch) {
+        const idx = experienceMatch[1];
+        allowedDeletes.add(`experience[${idx}]`);
+        allowedInserts.add(`experience[${idx}].bullets`);
+      }
+      const projectMatch = field.path.match(/^projects\[(\d+)\]/);
+      if (projectMatch) {
+        const idx = projectMatch[1];
+        allowedDeletes.add(`projects[${idx}]`);
+        allowedInserts.add(`projects[${idx}].bullets`);
+        allowedInserts.add(`projects[${idx}].technologies`);
+      }
+      const educationMatch = field.path.match(/^education\[(\d+)\]/);
+      if (educationMatch) {
+        const idx = educationMatch[1];
+        allowedDeletes.add(`education[${idx}]`);
+      }
+      const skillMatch = field.path.match(/^skills\[(\d+)\]/);
+      if (skillMatch) {
+        const idx = skillMatch[1];
+        allowedDeletes.add(`skills[${idx}]`);
+        allowedInserts.add("skills");
+      }
+      const bulletMatch = field.path.match(/^(experience|projects)\[(\d+)\]\.bullets\[(\d+)\]/);
+      if (bulletMatch) {
+        const sectionName = bulletMatch[1];
+        const idx = bulletMatch[2];
+        allowedDeletes.add(field.path);
+        allowedInserts.add(`${sectionName}[${idx}].bullets`);
+      }
+    });
+
+    if (scope.type === "section") {
+      const section = scope.section as SectionKey | undefined;
+      if (section === "experience") {
+        allowedInserts.add("experience");
+      }
+      if (section === "projects") {
+        allowedInserts.add("projects");
+      }
+      if (section === "education") {
+        allowedInserts.add("education");
+      }
+      if (section === "skills") {
+        allowedInserts.add("skills");
+      }
+    }
+
+    return { allowedPaths, allowedDeletes, allowedInserts };
+  };
+
+  const normalizeBulkOps = (
+    operations: Array<Omit<BulkOperation, "id">>,
+    scope: { type: "selection" | "section"; section?: string },
+    fields: SelectedField[]
+  ) => {
+    const { allowedPaths, allowedDeletes, allowedInserts } = buildAllowedTargets(
+      fields,
+      scope
+    );
+
+    return operations.flatMap((operation) => {
+      if (operation.op === "replace") {
+        if (!allowedPaths.has(operation.path)) return [];
+        const replaceTypes: BulkOperation["itemType"][] = [
+          "text",
+          "bullet",
+          "technology",
+        ];
+        if (!replaceTypes.includes(operation.itemType)) return [];
+        return [{ ...operation, id: crypto.randomUUID() }];
+      }
+      if (operation.op === "delete") {
+        if (!allowedDeletes.has(operation.path)) return [];
+        return [{ ...operation, id: crypto.randomUUID() }];
+      }
+      if (operation.op === "insert") {
+        if (!allowedInserts.has(operation.path)) return [];
+        if (!operation.value) return [];
+        return [{ ...operation, id: crypto.randomUUID() }];
+      }
+      return [];
+    });
+  };
+
+  const requestBulkRewrite = async (
+    instruction: string,
+    fields: SelectedField[],
+    scope: { type: "selection" | "section"; section?: string }
+  ) => {
+    if (!instruction.trim()) return;
+    if (scope.type === "selection" && fields.length === 0) {
+      setBulkError("Select some resume text first.");
+      return;
+    }
+    setBulkLoading(true);
+    setBulkError(null);
+    setBulkOps([]);
+
+    try {
+      const response = await fetch("/api/selection-rewrite", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          instruction,
+          fields,
+          scope,
+        }),
+      });
+
+      const rawText = await response.text();
+      let payload: { operations?: Array<Omit<BulkOperation, "id">>; error?: string } | null =
+        null;
+      try {
+        payload = rawText ? (JSON.parse(rawText) as typeof payload) : null;
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to rewrite selection.");
+      }
+
+      const operations = payload?.operations ?? [];
+      const normalized = normalizeBulkOps(operations, scope, fields);
+      if (normalized.length === 0) {
+        throw new Error("No valid edits were returned for this selection.");
+      }
+      setBulkOps(normalized);
+      setIsBulkOpen(true);
+    } catch (error) {
+      setBulkError(
+        error instanceof Error ? error.message : "Failed to rewrite selection."
+      );
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        section: SectionKey;
+        instruction: string;
+      }>).detail;
+      if (!detail) return;
+      const fields = buildSectionFields(detail.section);
+      setBulkFields(fields);
+      setBulkTargetLabel(`Section: ${SECTION_LABELS[detail.section]}`);
+      setBulkPrompt(detail.instruction);
+      setBulkScope({ type: "section", section: detail.section });
+      setIsBulkOpen(true);
+      requestBulkRewrite(detail.instruction, fields, {
+        type: "section",
+        section: detail.section,
+      });
+    };
+
+    window.addEventListener("resume-section-ai", handler as EventListener);
+    return () =>
+      window.removeEventListener("resume-section-ai", handler as EventListener);
+  }, [buildSectionFields, requestBulkRewrite]);
+
+  const getValueAtPath = (data: ResumeData, path: string) => {
+    const segments = parseFieldPath(path);
+    let cursor: any = data;
+    for (const segment of segments) {
+      if (cursor == null) return "";
+      cursor = cursor[segment as keyof typeof cursor];
+    }
+    return cursor;
+  };
+
+  const parseJsonValue = <T,>(value: string): T | null => {
+    try {
+      const parsed = JSON.parse(value) as T;
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const normalizeInsertValue = (
+    path: string,
+    itemType: BulkOperation["itemType"],
+    value: string
+  ) => {
+    if (itemType === "bullet" || itemType === "technology") {
+      return value;
+    }
+
+    if (itemType === "experience" && path === "experience") {
+      const entry = parseJsonValue<{
+        company?: string;
+        jobTitle?: string;
+        location?: string;
+        startDate?: string;
+        endDate?: string;
+        bullets?: string[];
+      }>(value);
+      if (!entry) return null;
+      return {
+        id: crypto.randomUUID(),
+        company: entry.company ?? "",
+        jobTitle: entry.jobTitle ?? "",
+        location: entry.location ?? "",
+        startDate: entry.startDate ?? "",
+        endDate: entry.endDate ?? "",
+        bullets: Array.isArray(entry.bullets) ? entry.bullets : [],
+      };
+    }
+
+    if (itemType === "project" && path === "projects") {
+      const entry = parseJsonValue<{
+        name?: string;
+        description?: string;
+        technologies?: string[];
+        bullets?: string[];
+      }>(value);
+      if (!entry) return null;
+      return {
+        id: crypto.randomUUID(),
+        name: entry.name ?? "",
+        description: entry.description ?? "",
+        technologies: Array.isArray(entry.technologies)
+          ? entry.technologies
+          : [],
+        bullets: Array.isArray(entry.bullets) ? entry.bullets : [],
+      };
+    }
+
+    if (itemType === "education" && path === "education") {
+      const entry = parseJsonValue<{
+        degree?: string;
+        institution?: string;
+        location?: string;
+        field?: string;
+        graduationDate?: string;
+        gpa?: string;
+      }>(value);
+      if (!entry) return null;
+      return {
+        id: crypto.randomUUID(),
+        degree: entry.degree ?? "",
+        institution: entry.institution ?? "",
+        location: entry.location ?? "",
+        field: entry.field ?? "",
+        graduationDate: entry.graduationDate ?? "",
+        gpa: entry.gpa ?? "",
+      };
+    }
+
+    if (itemType === "skill" && path === "skills") {
+      const entry = parseJsonValue<{ name?: string; category?: string }>(value);
+      if (!entry) return null;
+      return {
+        id: crypto.randomUUID(),
+        name: entry.name ?? "",
+        category: entry.category ?? "",
+      };
+    }
+
+    return null;
+  };
+
+  const removeAtPath = (data: ResumeData, path: string) => {
+    const segments = parseFieldPath(path);
+    const index = segments[segments.length - 1];
+    if (typeof index !== "number") return data;
+    const parentSegments = segments.slice(0, -1);
+    const next = structuredClone(data);
+    let cursor: any = next;
+    for (const segment of parentSegments) {
+      if (cursor == null) return data;
+      cursor = cursor[segment as keyof typeof cursor];
+    }
+    if (!Array.isArray(cursor)) return data;
+    if (index < 0 || index >= cursor.length) return data;
+    cursor.splice(index, 1);
+    return next;
+  };
+
+  const insertAtPath = (
+    data: ResumeData,
+    path: string,
+    itemType: BulkOperation["itemType"],
+    value: BulkOperation["value"],
+    index?: number
+  ) => {
+    const segments = parseFieldPath(path);
+    const last = segments[segments.length - 1];
+    if (typeof last !== "string") return data;
+    const next = structuredClone(data);
+    let cursor: any = next;
+    for (const segment of segments) {
+      if (segment === last) break;
+      if (cursor == null) return data;
+      cursor = cursor[segment as keyof typeof cursor];
+    }
+    if (!cursor || typeof cursor !== "object") return data;
+    const array = cursor[last as keyof typeof cursor];
+    if (!Array.isArray(array)) return data;
+
+    const normalizedValue = normalizeInsertValue(last, itemType, value);
+    if (!normalizedValue) return data;
+
+    const insertIndex =
+      typeof index === "number" && index >= 0 && index <= array.length
+        ? index
+        : array.length;
+
+    array.splice(insertIndex, 0, normalizedValue);
+    return next;
+  };
+
+  const applyBulkOperation = (op: BulkOperation) => {
+    if (op.op === "replace") {
+      if (op.path.endsWith(".technologies")) {
+        const next = structuredClone(resumeData);
+        const current = getValueAtPath(next, op.path);
+        if (Array.isArray(current)) {
+          const segments = parseFieldPath(op.path);
+          let cursor: any = next;
+          for (let i = 0; i < segments.length - 1; i += 1) {
+            cursor = cursor[segments[i] as keyof typeof cursor];
+          }
+          cursor[segments[segments.length - 1] as keyof typeof cursor] =
+            parseCommaList(op.value);
+          return next;
+        }
+      }
+      return setResumeValueAtPath(resumeData, op.path, op.value);
+    }
+    if (op.op === "delete") {
+      return removeAtPath(resumeData, op.path);
+    }
+    if (op.op === "insert") {
+      return insertAtPath(resumeData, op.path, op.itemType, op.value, op.index);
+    }
+    return resumeData;
+  };
+
+  const acceptBulkOperation = (opId: string) => {
+    const op = bulkOps.find((entry) => entry.id === opId);
+    if (!op) return;
+    const next = applyBulkOperation(op);
+    onResumeUpdate(next);
+    setBulkOps((current) => current.filter((entry) => entry.id !== opId));
+  };
+
+  const rejectBulkOperation = (opId: string) => {
+    setBulkOps((current) => current.filter((entry) => entry.id !== opId));
+  };
+
 
   const aiTriggerClasses = (isOpen: boolean, hoverClasses: string) =>
     cn(
@@ -1352,6 +1901,7 @@ export function ResumeViewer({
         className="leading-relaxed text-gray-700 dark:text-gray-300"
         style={resumeFontSizeStyles.body}
         multiline
+        fieldPath="metadata.summary"
       />,
       {
         wrapperElement: "div",
@@ -1409,6 +1959,7 @@ export function ResumeViewer({
                   } as Partial<ResumeData["experience"][number]>)
                 }
                 placeholder={primaryFallback}
+                fieldPath={primaryPath}
               />
             )}
           </span>
@@ -1436,6 +1987,7 @@ export function ResumeViewer({
                     })
                   }
                   placeholder="Start"
+                  fieldPath={startDatePath}
                 />
               )}
               <span className="mx-1">-</span>
@@ -1447,6 +1999,7 @@ export function ResumeViewer({
                     updateExperienceEntry(entry.id, { endDate: value })
                   }
                   placeholder="Present"
+                  fieldPath={endDatePath}
                 />
               )}
             </span>
@@ -1467,6 +2020,7 @@ export function ResumeViewer({
                   } as Partial<ResumeData["experience"][number]>)
                 }
                 placeholder={secondaryFallback}
+                fieldPath={secondaryPath}
               />
             )}
           </p>
@@ -1482,6 +2036,7 @@ export function ResumeViewer({
                   updateExperienceEntry(entry.id, { location: value })
                 }
                 placeholder="Location"
+                fieldPath={locationPath}
               />
             )}
           </p>
@@ -1514,6 +2069,7 @@ export function ResumeViewer({
                     <StaticText
                       value={bulletValue}
                       className="min-w-0 flex-1 break-words self-baseline block"
+                      fieldPath={bulletPath}
                     />
                   ) : (
                     <EditableText
@@ -1523,6 +2079,7 @@ export function ResumeViewer({
                       }
                       placeholder="Describe your accomplishment..."
                       className="min-w-0 flex-1 break-words self-baseline block"
+                      fieldPath={bulletPath}
                     />
                   )}
                   <div className="absolute right-0 top-[0.1em] z-10 flex items-center gap-1 translate-x-full">
@@ -1653,6 +2210,7 @@ export function ResumeViewer({
                   updateProjectEntry(project.id, { name: value })
                 }
                 placeholder="Project Name"
+                fieldPath={namePath}
               />
             )}
           </span>
@@ -1680,6 +2238,7 @@ export function ResumeViewer({
                     })
                   }
                   placeholder="Technologies"
+                  fieldPath={`projects[${projectIndex}].technologies`}
                 />
               )}
             </span>
@@ -1692,6 +2251,7 @@ export function ResumeViewer({
               className="text-gray-700 dark:text-gray-300"
               style={resumeFontSizeStyles.body}
               multiline
+              fieldPath={descriptionPath}
             />
           ) : (
             <EditableText
@@ -1703,6 +2263,7 @@ export function ResumeViewer({
               className="text-gray-700 dark:text-gray-300"
               style={resumeFontSizeStyles.body}
               multiline
+              fieldPath={descriptionPath}
             />
           )}
           <div className="absolute right-0 top-0 z-10 flex items-center gap-1 translate-x-full">
@@ -1779,6 +2340,7 @@ export function ResumeViewer({
                     <StaticText
                       value={bulletValue}
                       className="min-w-0 flex-1 break-words self-baseline block"
+                      fieldPath={bulletPath}
                     />
                   ) : (
                     <EditableText
@@ -1788,6 +2350,7 @@ export function ResumeViewer({
                       }
                       placeholder="Project impact..."
                       className="min-w-0 flex-1 break-words self-baseline block"
+                      fieldPath={bulletPath}
                     />
                   )}
                   <div className="absolute right-0 top-[0.1em] z-10 flex items-center gap-1 translate-x-full">
@@ -1925,6 +2488,7 @@ export function ResumeViewer({
                   } as Partial<ResumeData["education"][number]>)
                 }
                 placeholder={primaryFallback}
+                fieldPath={primaryPath}
               />
             )}
           </p>
@@ -1950,6 +2514,7 @@ export function ResumeViewer({
                     updateEducationEntry(entry.id, { graduationDate: value })
                   }
                   placeholder="Graduation"
+                  fieldPath={graduationPath}
                 />
               )}
             </span>
@@ -1970,6 +2535,7 @@ export function ResumeViewer({
                   } as Partial<ResumeData["education"][number]>)
                 }
                 placeholder={secondaryFallback}
+                fieldPath={secondaryPath}
               />
             )}
             {entry.gpa && (
@@ -1990,6 +2556,7 @@ export function ResumeViewer({
                         updateEducationEntry(entry.id, { gpa: value })
                       }
                       placeholder="GPA"
+                      fieldPath={gpaPath}
                     />
                   )}
                 </span>
@@ -2008,6 +2575,7 @@ export function ResumeViewer({
                   updateEducationEntry(entry.id, { location: value })
                 }
                 placeholder="Location"
+                fieldPath={locationPath}
               />
             )}
           </p>
@@ -2063,6 +2631,7 @@ export function ResumeViewer({
           value={skill.name}
           onChange={(value) => updateSkill(skill.id, { name: value })}
           placeholder="Skill"
+          fieldPath={skillPath ?? undefined}
         />
       );
 
@@ -2095,6 +2664,7 @@ export function ResumeViewer({
           value={category}
           onChange={(value) => updateSkillCategory(category, value)}
           placeholder="Category"
+          fieldPath={categoryPath ?? undefined}
         />
       );
       return categoryPath ? renderWithFeedback(categoryPath, content) : content;
@@ -2184,6 +2754,14 @@ export function ResumeViewer({
     margins: pageSettings.margins,
     elementGap: 24, // space-y-6 = 1.5rem = 24px
   });
+
+  const setResumeContainerRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      resumeContentRef.current = node;
+      resumePagination.containerRef.current = node;
+    },
+    [resumePagination.containerRef]
+  );
 
   const resumeElementDefs = useMemo(() => {
     const defs: Array<{ id: string; isHeader: boolean }> = [];
@@ -2284,6 +2862,7 @@ export function ResumeViewer({
                   value={metadata.fullName}
                   onChange={(fullName) => updateMetadata({ fullName })}
                   placeholder="Your Name"
+                  fieldPath="metadata.fullName"
                 />
               )}
             </h1>
@@ -2307,6 +2886,7 @@ export function ResumeViewer({
                   value={metadata.subtitle}
                   onChange={(subtitle) => updateMetadata({ subtitle })}
                   placeholder="Professional Title"
+                  fieldPath="metadata.subtitle"
                 />
               )}
             </p>
@@ -2358,14 +2938,15 @@ export function ResumeViewer({
                 return contactItems.map((item, index) => (
                   <Fragment key={item.key}>
                     {(() => {
-                      const feedbackPath = `metadata.contactInfo.${item.key}`;
-                      const input = (
-                        <EditableText
-                          value={item.value}
-                          onChange={item.onChange}
-                          placeholder={item.placeholder}
-                        />
-                      );
+                    const feedbackPath = `metadata.contactInfo.${item.key}`;
+                    const input = (
+                      <EditableText
+                        value={item.value}
+                        onChange={item.onChange}
+                        placeholder={item.placeholder}
+                        fieldPath={feedbackPath}
+                      />
+                    );
                       const node = item.link ? (
                         <a
                           href={item.href}
@@ -2736,6 +3317,186 @@ export function ResumeViewer({
 
   return (
     <div className="relative flex h-full flex-col">
+      {selectionState && selectionAnchor && !isBulkOpen && (
+        <div
+          className="fixed z-40"
+          style={{ top: selectionAnchor.top, left: selectionAnchor.left }}
+        >
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon"
+            className="h-8 w-8 shadow-md"
+            onClick={() => {
+              setBulkFields(selectionState.fields);
+              setBulkTargetLabel(`Selection (${selectionState.fields.length})`);
+              setBulkPrompt("");
+              setBulkOps([]);
+              setBulkError(null);
+              setBulkScope({ type: "selection" });
+              setIsBulkOpen(true);
+            }}
+            aria-label="Rewrite selection with AI"
+          >
+            <Sparkles className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+      {isBulkOpen && (
+        <div
+          className="absolute right-4 z-40 w-[380px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl"
+          style={{ top: `${bulkPanelTop}px` }}
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium">
+              {bulkTargetLabel || "Selection"}
+            </p>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setIsBulkCollapsed((current) => !current)}
+                aria-label={isBulkCollapsed ? "Expand suggestions" : "Collapse suggestions"}
+              >
+                {isBulkCollapsed ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={() => {
+                  setIsBulkOpen(false);
+                  setBulkOps([]);
+                  setBulkError(null);
+                  setBulkPrompt("");
+                  setIsBulkCollapsed(false);
+                  if (!selectionState) {
+                    clearSelectionState();
+                  }
+                }}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+          {!isBulkCollapsed && (
+            <>
+              <div className="mt-2 space-y-2">
+                <Input
+                  value={bulkPrompt}
+                  onChange={(event) => setBulkPrompt(event.target.value)}
+                  placeholder="Tell AI how to improve the selection..."
+                  className="h-8 text-xs"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      requestBulkRewrite(
+                        bulkPrompt,
+                        bulkFields,
+                        bulkScope
+                      );
+                    }
+                  }}
+                />
+                <div className="flex items-center justify-between">
+                  <span
+                    className={cn(
+                      "text-[10px]",
+                      bulkError ? "text-destructive" : "text-muted-foreground"
+                    )}
+                  >
+                    {bulkError ||
+                      (bulkFields.length > 0
+                        ? `${bulkFields.length} selected fields`
+                        : "Select resume text to begin.")}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="h-6 px-2 text-[10px]"
+                    onClick={() =>
+                      requestBulkRewrite(
+                        bulkPrompt,
+                        bulkFields,
+                        bulkScope
+                      )
+                    }
+                    disabled={bulkLoading || !bulkPrompt.trim()}
+                  >
+                    {bulkLoading ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      "Generate"
+                    )}
+                  </Button>
+                </div>
+              </div>
+              <div className="mt-3 space-y-2">
+                {bulkOps.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    {bulkLoading
+                      ? "Generating AI edits..."
+                      : "No AI edits yet. Submit an instruction to generate changes."}
+                  </p>
+                ) : (
+                  bulkOps.map((op) => (
+                    <div
+                      key={op.id}
+                      className="rounded-md border border-border/60 bg-background/80 p-2"
+                    >
+                      <p className="text-[11px] font-medium text-foreground">
+                        {op.op === "replace"
+                          ? "Replace text"
+                          : op.op === "delete"
+                            ? "Remove item"
+                            : "Add item"}
+                      </p>
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        {op.path}
+                      </p>
+                      {(op.op === "replace" || op.op === "insert") && (
+                        <p className="mt-2 text-[11px] text-foreground">
+                          {op.value}
+                        </p>
+                      )}
+                      <div className="mt-2 flex items-center justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-[10px]"
+                          onClick={() => rejectBulkOperation(op.id)}
+                        >
+                          Reject
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="h-6 px-2 text-[10px]"
+                          onClick={() => acceptBulkOperation(op.id)}
+                        >
+                          Accept
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
+          {isBulkCollapsed && (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Suggestions hidden. Expand to review.
+            </p>
+          )}
+        </div>
+      )}
       {isDebugOpen && (
         <div className="absolute right-4 top-[60px] z-40 w-[360px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl">
           <div className="flex items-center justify-between">
@@ -2791,8 +3552,10 @@ export function ResumeViewer({
               style={{ maxWidth: paperMaxWidth }}
             >
               <div
-                ref={resumePagination.containerRef}
+                ref={setResumeContainerRef}
                 className="resume-pages flex flex-col gap-8"
+                onMouseUp={collectSelectedFields}
+                onKeyUp={collectSelectedFields}
               >
                 {/* eslint-disable-next-line react-hooks/refs */}
                 {resumePageIndices.map((pageIndex) => (

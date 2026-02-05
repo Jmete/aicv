@@ -14,6 +14,7 @@ import { PageSettings } from "./page-settings";
 import { ProjectsEditor } from "./projects-editor";
 import { ResumeImportPanel } from "./resume-import";
 import { SectionVisibility } from "./section-visibility";
+import { SectionAiHeader } from "./section-ai-header";
 import { SkillsEditor } from "./skills-editor";
 
 interface ResumeEditorPanelProps {
@@ -198,57 +199,69 @@ export function ResumeEditorPanel({
           </TabsContent>
 
           <TabsContent value="work" className="m-0 p-4">
-            <ExperienceEditor
-              experience={resumeData.experience}
-              order={layoutPreferences.experienceOrder}
-              onOrderChange={(experienceOrder) =>
-                onResumeUpdate({
-                  ...resumeData,
-                  layoutPreferences: {
-                    ...layoutPreferences,
-                    experienceOrder,
-                  },
-                })
-              }
-              onChange={(experience) =>
-                onResumeUpdate({ ...resumeData, experience })
-              }
-            />
+            <div className="space-y-4">
+              <SectionAiHeader title="Experience" section="experience" />
+              <ExperienceEditor
+                experience={resumeData.experience}
+                order={layoutPreferences.experienceOrder}
+                onOrderChange={(experienceOrder) =>
+                  onResumeUpdate({
+                    ...resumeData,
+                    layoutPreferences: {
+                      ...layoutPreferences,
+                      experienceOrder,
+                    },
+                  })
+                }
+                onChange={(experience) =>
+                  onResumeUpdate({ ...resumeData, experience })
+                }
+              />
+            </div>
           </TabsContent>
 
           <TabsContent value="projects" className="m-0 p-4">
-            <ProjectsEditor
-              projects={resumeData.projects}
-              onChange={(projects) =>
-                onResumeUpdate({ ...resumeData, projects })
-              }
-            />
+            <div className="space-y-4">
+              <SectionAiHeader title="Projects" section="projects" />
+              <ProjectsEditor
+                projects={resumeData.projects}
+                onChange={(projects) =>
+                  onResumeUpdate({ ...resumeData, projects })
+                }
+              />
+            </div>
           </TabsContent>
 
           <TabsContent value="education" className="m-0 p-4">
-            <EducationEditor
-              education={resumeData.education}
-              order={layoutPreferences.educationOrder}
-              onOrderChange={(educationOrder) =>
-                onResumeUpdate({
-                  ...resumeData,
-                  layoutPreferences: {
-                    ...layoutPreferences,
-                    educationOrder,
-                  },
-                })
-              }
-              onChange={(education) =>
-                onResumeUpdate({ ...resumeData, education })
-              }
-            />
+            <div className="space-y-4">
+              <SectionAiHeader title="Education" section="education" />
+              <EducationEditor
+                education={resumeData.education}
+                order={layoutPreferences.educationOrder}
+                onOrderChange={(educationOrder) =>
+                  onResumeUpdate({
+                    ...resumeData,
+                    layoutPreferences: {
+                      ...layoutPreferences,
+                      educationOrder,
+                    },
+                  })
+                }
+                onChange={(education) =>
+                  onResumeUpdate({ ...resumeData, education })
+                }
+              />
+            </div>
           </TabsContent>
 
           <TabsContent value="skills" className="m-0 p-4">
-            <SkillsEditor
-              skills={resumeData.skills}
-              onChange={(skills) => onResumeUpdate({ ...resumeData, skills })}
-            />
+            <div className="space-y-4">
+              <SectionAiHeader title="Skills" section="skills" />
+              <SkillsEditor
+                skills={resumeData.skills}
+                onChange={(skills) => onResumeUpdate({ ...resumeData, skills })}
+              />
+            </div>
           </TabsContent>
 
           <TabsContent value="cover" className="m-0 p-4">
