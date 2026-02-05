@@ -48,9 +48,22 @@ export const applicationSkills = sqliteTable("application_skills", {
   isSelected: integer("is_selected", { mode: "boolean" }).default(false).notNull(),
 });
 
+export const resumeData = sqliteTable("resume_data", {
+  id: integer("id").primaryKey(),
+  data: text("data").notNull(),
+  createdAt: text("created_at")
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+  updatedAt: text("updated_at")
+    .default(sql`CURRENT_TIMESTAMP`)
+    .notNull(),
+});
+
 export type Skill = typeof skills.$inferSelect;
 export type NewSkill = typeof skills.$inferInsert;
 export type Application = typeof applications.$inferSelect;
 export type NewApplication = typeof applications.$inferInsert;
 export type ApplicationSkill = typeof applicationSkills.$inferSelect;
 export type NewApplicationSkill = typeof applicationSkills.$inferInsert;
+export type ResumeDataRow = typeof resumeData.$inferSelect;
+export type NewResumeDataRow = typeof resumeData.$inferInsert;

@@ -2,6 +2,7 @@
 
 import {
   Fragment,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -11,19 +12,34 @@ import type { ClipboardEvent, CSSProperties, KeyboardEvent, ReactNode } from "re
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DEFAULT_LAYOUT_PREFERENCES, PAPER_DIMENSIONS } from "@/lib/resume-defaults";
+import { applyReplacementTemplate } from "@/lib/resume-analysis";
 import { cn } from "@/lib/utils";
 import type {
   ContactFieldKey,
   FontFamily,
   HeaderAlignment,
   ResumeData,
+  ResumeAnalysisState,
   SectionKey,
   SkillEntry,
   TextAlignment,
 } from "@/types";
-import { AlignCenter, AlignLeft, AlignRight, Plus, Trash2 } from "lucide-react";
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  AlertCircle,
+  Check,
+  Loader2,
+  Plus,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 import { usePagination } from "@/hooks/use-pagination";
 
 const CONTACT_FIELDS = [
@@ -71,9 +87,22 @@ const FONT_FAMILY_MAP: Record<FontFamily, string> = {
   mono: "var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
 };
 
+const AI_SUGGESTIONS = [
+  "Make this shorter",
+  "Sound more professional",
+  "Add impact metrics",
+  "Clarify the scope",
+] as const;
+
 interface ResumeViewerProps {
   resumeData: ResumeData;
   onResumeUpdate: (data: ResumeData) => void;
+  analysis: ResumeAnalysisState | null;
+  onApplySuggestion: (
+    path: string,
+    suggestionId: string,
+    replacement: string
+  ) => void;
 }
 
 interface EditableTextProps {
@@ -160,9 +189,440 @@ function EditableText({
   );
 }
 
+interface InlineAiAssistProps {
+  isOpen: boolean;
+  onToggle: () => void;
+  onSubmit: (prompt: string) => void;
+  isLoading?: boolean;
+  error?: string | null;
+  placeholder?: string;
+  className?: string;
+  triggerClassName?: string;
+  panelClassName?: string;
+}
+
+function InlineAiAssist({
+  isOpen,
+  onToggle,
+  onSubmit,
+  isLoading = false,
+  error,
+  placeholder = "Ask AI to refine this...",
+  className,
+  triggerClassName,
+  panelClassName,
+}: InlineAiAssistProps) {
+  const [prompt, setPrompt] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setPrompt("");
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      inputRef.current?.focus();
+    }
+  }, [isOpen]);
+
+  const applySuggestion = (suggestion: string) => {
+    setPrompt(suggestion);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const submit = () => {
+    const trimmed = prompt.trim();
+    if (!trimmed || isLoading) return;
+    onSubmit(trimmed);
+  };
+
+  return (
+    <div className={cn("relative", className)}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className={cn(
+          "h-5 w-5 text-muted-foreground hover:text-foreground",
+          triggerClassName
+        )}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle();
+        }}
+        aria-label="AI suggestions"
+      >
+        <Sparkles className="h-3.5 w-3.5" />
+      </Button>
+      {isOpen && (
+        <div
+          className={cn(
+            "absolute right-0 top-full z-20 mt-2 w-72 rounded-md border border-border bg-white p-2 shadow-lg",
+            panelClassName
+          )}
+        >
+          <Input
+            ref={inputRef}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder={placeholder}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                submit();
+              }
+            }}
+            className="h-8 rounded-sm bg-white text-[11px] text-gray-900 placeholder:text-gray-500 focus-visible:ring-1 dark:bg-white dark:text-gray-900"
+          />
+          <div className="mt-2 flex flex-wrap gap-1">
+            {AI_SUGGESTIONS.map((suggestion) => (
+              <Button
+                key={suggestion}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 rounded-full border-neutral-200 bg-white px-2.5 text-[10px] font-medium text-gray-700 hover:bg-neutral-100 hover:text-gray-900 dark:border-neutral-200 dark:bg-white dark:text-gray-700 dark:hover:bg-neutral-100"
+                onClick={() => applySuggestion(suggestion)}
+              >
+                {suggestion}
+              </Button>
+            ))}
+          </div>
+          <div className="mt-2 flex items-center justify-between">
+            <span
+              className={cn(
+                "text-[10px]",
+                error ? "text-destructive" : "text-muted-foreground"
+              )}
+            >
+              {error || "Press Enter to run."}
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="h-6 px-2 text-[10px]"
+              onClick={submit}
+              disabled={isLoading || !prompt.trim()}
+            >
+              {isLoading ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                "Generate"
+              )}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface StaticTextProps {
+  value: string;
+  className?: string;
+  style?: CSSProperties;
+  multiline?: boolean;
+}
+
+function StaticText({
+  value,
+  className,
+  style,
+  multiline = false,
+}: StaticTextProps) {
+  return (
+    <span
+      className={cn(
+        multiline
+          ? "block whitespace-pre-line break-words"
+          : "inline-block max-w-full break-words align-baseline",
+        className
+      )}
+      style={style}
+    >
+      {value}
+    </span>
+  );
+}
+
+interface AiDecisionButtonsProps {
+  onAccept: () => void;
+  onReject: () => void;
+  className?: string;
+}
+
+function AiDecisionButtons({
+  onAccept,
+  onReject,
+  className,
+}: AiDecisionButtonsProps) {
+  return (
+    <div className={cn("flex items-center gap-1", className)}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-5 w-5 text-emerald-600 hover:text-emerald-700"
+        onClick={onAccept}
+        aria-label="Accept AI replacement"
+      >
+        <Check className="h-3.5 w-3.5" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="h-5 w-5 text-rose-600 hover:text-rose-700"
+        onClick={onReject}
+        aria-label="Reject AI replacement"
+      >
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+interface ReplacementEditorProps {
+  value: string;
+  onChange: (value: string) => void;
+  className?: string;
+}
+
+function ReplacementEditor({
+  value,
+  onChange,
+  className,
+}: ReplacementEditorProps) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.style.height = "auto";
+    ref.current.style.height = `${ref.current.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <Textarea
+      ref={ref}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      rows={2}
+      className={cn("min-h-[64px] resize-none text-[11px]", className)}
+    />
+  );
+}
+
+type FieldFeedback = ResumeAnalysisState["fieldFeedback"][number];
+
+type AiSuggestion = {
+  original: string;
+  replacement: string;
+};
+
+interface QualityIndicatorProps {
+  feedback?: FieldFeedback;
+  path: string;
+  onApplySuggestion: (
+    path: string,
+    suggestionId: string,
+    replacement: string
+  ) => void;
+  className?: string;
+}
+
+function QualityIndicator({
+  feedback,
+  path,
+  onApplySuggestion,
+  className,
+}: QualityIndicatorProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const closeTimeoutRef = useRef<number | null>(null);
+  const [replacementDrafts, setReplacementDrafts] = useState<
+    Record<string, string>
+  >({});
+
+  if (!feedback || feedback.quality !== "needs improvement") {
+    return null;
+  }
+
+  const updateReplacement = (suggestionId: string, value: string) => {
+    setReplacementDrafts((current) => ({
+      ...current,
+      [suggestionId]: value,
+    }));
+  };
+
+  const applySuggestion = (
+    suggestion: FieldFeedback["improvementSuggestions"][number],
+    replacement: string
+  ) => {
+    const trimmed = replacement.trim();
+    if (!trimmed) return;
+    onApplySuggestion(path, suggestion.id, trimmed);
+    setIsOpen(false);
+  };
+
+  const clearCloseTimer = () => {
+    if (closeTimeoutRef.current) {
+      window.clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+  };
+
+  const openPanel = () => {
+    clearCloseTimer();
+    setIsOpen(true);
+  };
+
+  const scheduleClose = () => {
+    clearCloseTimer();
+    closeTimeoutRef.current = window.setTimeout(() => {
+      setIsOpen(false);
+    }, 160);
+  };
+
+  useEffect(() => {
+    return () => clearCloseTimer();
+  }, []);
+
+  return (
+    <div
+      className={cn("relative inline-flex items-center print:hidden", className)}
+      onFocus={() => openPanel()}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          scheduleClose();
+        }
+      }}
+      tabIndex={-1}
+    >
+      <button
+        type="button"
+        className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-amber-300 bg-amber-50 text-amber-600 shadow-sm transition hover:bg-amber-100"
+        aria-label="Needs improvement"
+        onMouseEnter={openPanel}
+        onMouseLeave={scheduleClose}
+        onFocus={openPanel}
+      >
+        <AlertCircle className="h-3 w-3" />
+      </button>
+      {isOpen && (
+        <div
+          className="absolute right-0 top-full z-30 mt-2 w-72 rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl"
+          onMouseEnter={openPanel}
+          onMouseLeave={scheduleClose}
+        >
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium text-foreground">
+              Needs improvement
+            </p>
+            {feedback.improvementSuggestions.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                No suggestions available yet.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {feedback.improvementSuggestions.map((suggestion) => {
+                  const effectiveValues = suggestion.requiredInputs.reduce(
+                    (acc, input) => {
+                      const value = input.placeholder ?? "";
+                      acc[input.key] = value;
+                      return acc;
+                    },
+                    {} as Record<string, string>
+                  );
+                  const defaultReplacement = suggestion.recommendedReplacement
+                    ? applyReplacementTemplate(
+                        suggestion.recommendedReplacement,
+                        effectiveValues
+                      ).trim()
+                    : "";
+                  const replacementDraft =
+                    replacementDrafts[suggestion.id] ?? defaultReplacement;
+                  const canApply = Boolean(replacementDraft?.trim());
+
+                  return (
+                    <div
+                      key={suggestion.id}
+                      className="rounded-md border border-border/60 bg-background/80 p-2"
+                    >
+                      <p className="text-[11px] font-medium text-foreground">
+                        {suggestion.issue}
+                      </p>
+                      {suggestion.requiresUserInput &&
+                        suggestion.requiredInputs.length > 0 && (
+                          <p className="mt-2 text-[10px] text-muted-foreground">
+                            Needs:{" "}
+                            {suggestion.requiredInputs
+                              .map((input) => input.label)
+                              .join(", ")}
+                          </p>
+                        )}
+                      {suggestion.recommendedReplacement ? (
+                        <div className="mt-2">
+                          <div className="text-[10px] text-muted-foreground">
+                            Replacement
+                          </div>
+                          <ReplacementEditor
+                            value={replacementDraft}
+                            onChange={(value) =>
+                              updateReplacement(suggestion.id, value)
+                            }
+                            className="mt-1"
+                          />
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-[10px] text-muted-foreground">
+                          No replacement available.
+                        </p>
+                      )}
+                      <div className="mt-2 flex items-center justify-between">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-[10px]"
+                          onClick={() =>
+                            updateReplacement(suggestion.id, defaultReplacement)
+                          }
+                          disabled={!defaultReplacement}
+                        >
+                          Reset to suggested
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="h-7 text-[11px]"
+                          onClick={() =>
+                            applySuggestion(suggestion, replacementDraft ?? "")
+                          }
+                          disabled={!canApply}
+                        >
+                          Apply change
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ResumeViewer({
   resumeData,
   onResumeUpdate,
+  analysis,
+  onApplySuggestion,
 }: ResumeViewerProps) {
   const {
     pageSettings,
@@ -175,6 +635,59 @@ export function ResumeViewer({
     education,
     skills,
   } = resumeData;
+
+  const feedbackMap = useMemo(() => {
+    if (!analysis?.fieldFeedback) {
+      return new Map<string, FieldFeedback>();
+    }
+    return new Map(
+      analysis.fieldFeedback.map((entry) => [entry.path, entry])
+    );
+  }, [analysis]);
+
+  const pickFeedback = useCallback((paths: string | string[]) => {
+    const list = Array.isArray(paths) ? paths : [paths];
+    for (const path of list) {
+      const feedback = feedbackMap.get(path);
+      if (feedback?.quality === "needs improvement") {
+        return { path, feedback };
+      }
+    }
+    return null;
+  }, [feedbackMap]);
+
+  const renderWithFeedback = useCallback(
+    (
+      paths: string | string[],
+      node: ReactNode,
+      options?: {
+        wrapperClassName?: string;
+        indicatorClassName?: string;
+        wrapperElement?: keyof JSX.IntrinsicElements;
+      }
+    ) => {
+      const match = pickFeedback(paths);
+      if (!match) return node;
+      const Wrapper = options?.wrapperElement ?? "span";
+      return (
+        <Wrapper
+          className={cn(
+            "relative inline-flex items-start gap-1",
+            options?.wrapperClassName
+          )}
+        >
+          {node}
+          <QualityIndicator
+            feedback={match.feedback}
+            path={match.path}
+            onApplySuggestion={onApplySuggestion}
+            className={options?.indicatorClassName}
+          />
+        </Wrapper>
+      );
+    },
+    [onApplySuggestion, pickFeedback]
+  );
 
   const resolvedLayoutPreferences = useMemo(
     () => ({
@@ -192,6 +705,14 @@ export function ResumeViewer({
         sizes: {
           ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences.sizes,
           ...layoutPreferences?.fontPreferences?.sizes,
+        },
+      },
+      coverLetterFontPreferences: {
+        ...DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences,
+        ...layoutPreferences?.coverLetterFontPreferences,
+        sizes: {
+          ...DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences.sizes,
+          ...layoutPreferences?.coverLetterFontPreferences?.sizes,
         },
       },
     }),
@@ -241,15 +762,146 @@ export function ResumeViewer({
     return { groupedSkills: grouped, ungroupedSkills: ungrouped };
   }, [skills]);
 
-  const todayFormatted = useMemo(
-    () =>
+  const [todayFormatted, setTodayFormatted] = useState("");
+  const [activeAiTarget, setActiveAiTarget] = useState<string | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<Record<string, AiSuggestion>>(
+    {}
+  );
+  const [aiLoading, setAiLoading] = useState<Record<string, boolean>>({});
+  const [aiErrors, setAiErrors] = useState<Record<string, string>>({});
+  const [isDebugOpen, setIsDebugOpen] = useState(false);
+  const rawDebugJson = useMemo(
+    () => (analysis?.raw ? JSON.stringify(analysis.raw, null, 2) : ""),
+    [analysis]
+  );
+
+  useEffect(() => {
+    setTodayFormatted(
       new Date().toLocaleDateString("en-US", {
         month: "long",
         day: "numeric",
         year: "numeric",
-      }),
-    []
-  );
+      })
+    );
+  }, []);
+
+  const toggleAiTarget = (key: string) => {
+    setActiveAiTarget((current) => (current === key ? null : key));
+  };
+
+  const updateAiLoading = (key: string, value: boolean) => {
+    setAiLoading((current) => {
+      const next = { ...current };
+      if (value) {
+        next[key] = true;
+      } else {
+        delete next[key];
+      }
+      return next;
+    });
+  };
+
+  const updateAiError = (key: string, message: string | null) => {
+    setAiErrors((current) => {
+      const next = { ...current };
+      if (message) {
+        next[key] = message;
+      } else {
+        delete next[key];
+      }
+      return next;
+    });
+  };
+
+  const clearAiSuggestion = (key: string) => {
+    setAiSuggestions((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    updateAiError(key, null);
+  };
+
+  const requestAiReplacement = async (
+    key: string,
+    text: string,
+    instruction: string,
+    context: Record<string, unknown>
+  ) => {
+    if (aiLoading[key]) return;
+    if (!text.trim()) {
+      updateAiError(key, "Add text before asking AI to rewrite.");
+      return;
+    }
+
+    updateAiError(key, null);
+    updateAiLoading(key, true);
+
+    try {
+      const response = await fetch("/api/inline-rewrite", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text,
+          instruction,
+          context,
+        }),
+      });
+
+      const rawText = await response.text();
+      let payload: { replacement?: string; error?: string } | null = null;
+      try {
+        payload = rawText ? (JSON.parse(rawText) as typeof payload) : null;
+      } catch {
+        payload = null;
+      }
+
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to rewrite text.");
+      }
+
+      const replacement = payload?.replacement?.trim();
+      if (!replacement) {
+        throw new Error("AI returned an empty replacement.");
+      }
+
+      setAiSuggestions((current) => ({
+        ...current,
+        [key]: {
+          original: text,
+          replacement,
+        },
+      }));
+      setActiveAiTarget(null);
+    } catch (error) {
+      updateAiError(
+        key,
+        error instanceof Error ? error.message : "Failed to rewrite text."
+      );
+    } finally {
+      updateAiLoading(key, false);
+    }
+  };
+
+  const acceptAiSuggestion = (
+    key: string,
+    apply: (value: string) => void
+  ) => {
+    const suggestion = aiSuggestions[key];
+    if (!suggestion) return;
+    apply(suggestion.replacement);
+    clearAiSuggestion(key);
+  };
+
+  const aiTriggerClasses = (isOpen: boolean, hoverClasses: string) =>
+    cn(
+      "h-5 w-5 transition",
+      isOpen
+        ? "opacity-100 pointer-events-auto text-amber-600"
+        : cn("opacity-0 pointer-events-none text-muted-foreground", hoverClasses)
+    );
 
   const hasExperience = experience.length > 0;
   const hasProjects = projects.length > 0;
@@ -313,6 +965,14 @@ export function ResumeViewer({
           sizes: {
             ...resolvedLayoutPreferences.fontPreferences.sizes,
             ...updates.fontPreferences?.sizes,
+          },
+        },
+        coverLetterFontPreferences: {
+          ...resolvedLayoutPreferences.coverLetterFontPreferences,
+          ...updates.coverLetterFontPreferences,
+          sizes: {
+            ...resolvedLayoutPreferences.coverLetterFontPreferences.sizes,
+            ...updates.coverLetterFontPreferences?.sizes,
           },
         },
       },
@@ -461,7 +1121,10 @@ export function ResumeViewer({
   };
 
   const headerAlignment = resolvedLayoutPreferences.headerAlignment;
-  const fontPreferences = resolvedLayoutPreferences.fontPreferences;
+  const resumeFontPreferences = resolvedLayoutPreferences.fontPreferences;
+  const coverLetterFontPreferences =
+    resolvedLayoutPreferences.coverLetterFontPreferences ??
+    resolvedLayoutPreferences.fontPreferences;
 
   const alignmentClassMap: Record<TextAlignment, string> = {
     left: "text-left",
@@ -472,27 +1135,50 @@ export function ResumeViewer({
   const getAlignmentClass = (value: TextAlignment) =>
     alignmentClassMap[value] ?? "text-left";
 
-  const paperTypographyStyle = useMemo<CSSProperties>(
+  const resumeTypographyStyle = useMemo<CSSProperties>(
     () => ({
       fontFamily:
-        FONT_FAMILY_MAP[fontPreferences.family] ?? FONT_FAMILY_MAP.serif,
+        FONT_FAMILY_MAP[resumeFontPreferences.family] ?? FONT_FAMILY_MAP.serif,
     }),
-    [fontPreferences.family]
+    [resumeFontPreferences.family]
   );
 
-  const fontSizeStyles = useMemo(() => {
+  const coverLetterTypographyStyle = useMemo<CSSProperties>(
+    () => ({
+      fontFamily:
+        FONT_FAMILY_MAP[coverLetterFontPreferences.family] ??
+        FONT_FAMILY_MAP.serif,
+    }),
+    [coverLetterFontPreferences.family]
+  );
+
+  const resumeFontSizeStyles = useMemo(() => {
     const toStyle = (size: number): CSSProperties => ({ fontSize: `${size}px` });
     return {
-      name: toStyle(fontPreferences.sizes.name),
-      subtitle: toStyle(fontPreferences.sizes.subtitle),
-      contact: toStyle(fontPreferences.sizes.contact),
-      sectionTitle: toStyle(fontPreferences.sizes.sectionTitle),
-      itemTitle: toStyle(fontPreferences.sizes.itemTitle),
-      itemDetail: toStyle(fontPreferences.sizes.itemDetail),
-      itemMeta: toStyle(fontPreferences.sizes.itemMeta),
-      body: toStyle(fontPreferences.sizes.body),
+      name: toStyle(resumeFontPreferences.sizes.name),
+      subtitle: toStyle(resumeFontPreferences.sizes.subtitle),
+      contact: toStyle(resumeFontPreferences.sizes.contact),
+      sectionTitle: toStyle(resumeFontPreferences.sizes.sectionTitle),
+      itemTitle: toStyle(resumeFontPreferences.sizes.itemTitle),
+      itemDetail: toStyle(resumeFontPreferences.sizes.itemDetail),
+      itemMeta: toStyle(resumeFontPreferences.sizes.itemMeta),
+      body: toStyle(resumeFontPreferences.sizes.body),
     };
-  }, [fontPreferences.sizes]);
+  }, [resumeFontPreferences.sizes]);
+
+  const coverLetterFontSizeStyles = useMemo(() => {
+    const toStyle = (size: number): CSSProperties => ({ fontSize: `${size}px` });
+    return {
+      name: toStyle(coverLetterFontPreferences.sizes.name),
+      subtitle: toStyle(coverLetterFontPreferences.sizes.subtitle),
+      contact: toStyle(coverLetterFontPreferences.sizes.contact),
+      sectionTitle: toStyle(coverLetterFontPreferences.sizes.sectionTitle),
+      itemTitle: toStyle(coverLetterFontPreferences.sizes.itemTitle),
+      itemDetail: toStyle(coverLetterFontPreferences.sizes.itemDetail),
+      itemMeta: toStyle(coverLetterFontPreferences.sizes.itemMeta),
+      body: toStyle(coverLetterFontPreferences.sizes.body),
+    };
+  }, [coverLetterFontPreferences.sizes]);
 
   const renderInlineAlignment = (
     label: string,
@@ -645,7 +1331,7 @@ export function ResumeViewer({
     <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
       <h2
         className="font-bold uppercase tracking-wide"
-        style={fontSizeStyles.sectionTitle}
+        style={resumeFontSizeStyles.sectionTitle}
       >
         {title}
       </h2>
@@ -657,14 +1343,22 @@ export function ResumeViewer({
     renderSectionHeader("Summary");
 
   const renderSummaryContent = () => (
-    <EditableText
-      value={metadata.summary}
-      onChange={(summary) => updateMetadata({ summary })}
-      placeholder="Your professional summary will appear here..."
-      className="leading-relaxed text-gray-700 dark:text-gray-300"
-      style={fontSizeStyles.body}
-      multiline
-    />
+    renderWithFeedback(
+      "metadata.summary",
+      <EditableText
+        value={metadata.summary}
+        onChange={(summary) => updateMetadata({ summary })}
+        placeholder="Your professional summary will appear here..."
+        className="leading-relaxed text-gray-700 dark:text-gray-300"
+        style={resumeFontSizeStyles.body}
+        multiline
+      />,
+      {
+        wrapperElement: "div",
+        wrapperClassName: "w-full pr-5",
+        indicatorClassName: "absolute right-0 top-0",
+      }
+    )
   );
 
   const renderExperienceHeader = () =>
@@ -681,7 +1375,10 @@ export function ResumeViewer({
       </Button>
     );
 
-  const renderExperienceItem = (entry: ResumeData["experience"][number]) => {
+  const renderExperienceItem = (
+    entry: ResumeData["experience"][number],
+    entryIndex: number
+  ) => {
     const primaryField =
       experienceOrder === "title-first" ? "jobTitle" : "company";
     const secondaryField =
@@ -690,22 +1387,30 @@ export function ResumeViewer({
       experienceOrder === "title-first" ? "Job Title" : "Company Name";
     const secondaryFallback =
       experienceOrder === "title-first" ? "Company Name" : "Job Title";
+    const primaryPath = `experience[${entryIndex}].${primaryField}`;
+    const secondaryPath = `experience[${entryIndex}].${secondaryField}`;
+    const startDatePath = `experience[${entryIndex}].startDate`;
+    const endDatePath = `experience[${entryIndex}].endDate`;
+    const locationPath = `experience[${entryIndex}].location`;
     return (
       <div className="group space-y-1">
         <div className="flex items-start justify-between gap-2">
           <span
             className="min-w-0 flex-1 font-semibold text-gray-900 dark:text-gray-100"
-            style={fontSizeStyles.itemTitle}
+            style={resumeFontSizeStyles.itemTitle}
           >
-            <EditableText
-              value={entry[primaryField]}
-              onChange={(value) =>
-                updateExperienceEntry(entry.id, {
-                  [primaryField]: value,
-                } as Partial<ResumeData["experience"][number]>)
-              }
-              placeholder={primaryFallback}
-            />
+            {renderWithFeedback(
+              primaryPath,
+              <EditableText
+                value={entry[primaryField]}
+                onChange={(value) =>
+                  updateExperienceEntry(entry.id, {
+                    [primaryField]: value,
+                  } as Partial<ResumeData["experience"][number]>)
+                }
+                placeholder={primaryFallback}
+              />
+            )}
           </span>
           <div className="flex shrink-0 items-center gap-2">
             <Button
@@ -719,94 +1424,166 @@ export function ResumeViewer({
             </Button>
             <span
               className="text-gray-600 dark:text-gray-400"
-              style={fontSizeStyles.itemMeta}
+              style={resumeFontSizeStyles.itemMeta}
             >
-              <EditableText
-                value={entry.startDate}
-                onChange={(value) =>
-                  updateExperienceEntry(entry.id, {
-                    startDate: value,
-                  })
-                }
-                placeholder="Start"
-              />
+              {renderWithFeedback(
+                startDatePath,
+                <EditableText
+                  value={entry.startDate}
+                  onChange={(value) =>
+                    updateExperienceEntry(entry.id, {
+                      startDate: value,
+                    })
+                  }
+                  placeholder="Start"
+                />
+              )}
               <span className="mx-1">-</span>
-              <EditableText
-                value={entry.endDate}
-                onChange={(value) =>
-                  updateExperienceEntry(entry.id, { endDate: value })
-                }
-                placeholder="Present"
-              />
+              {renderWithFeedback(
+                endDatePath,
+                <EditableText
+                  value={entry.endDate}
+                  onChange={(value) =>
+                    updateExperienceEntry(entry.id, { endDate: value })
+                  }
+                  placeholder="Present"
+                />
+              )}
             </span>
           </div>
         </div>
         <div className="flex items-start justify-between gap-2">
           <p
             className="min-w-0 flex-1 text-gray-700 dark:text-gray-300"
-            style={fontSizeStyles.itemDetail}
+            style={resumeFontSizeStyles.itemDetail}
           >
-            <EditableText
-              value={entry[secondaryField]}
-              onChange={(value) =>
-                updateExperienceEntry(entry.id, {
-                  [secondaryField]: value,
-                } as Partial<ResumeData["experience"][number]>)
-              }
-              placeholder={secondaryFallback}
-            />
+            {renderWithFeedback(
+              secondaryPath,
+              <EditableText
+                value={entry[secondaryField]}
+                onChange={(value) =>
+                  updateExperienceEntry(entry.id, {
+                    [secondaryField]: value,
+                  } as Partial<ResumeData["experience"][number]>)
+                }
+                placeholder={secondaryFallback}
+              />
+            )}
           </p>
           <p
             className="shrink-0 text-right text-gray-600 dark:text-gray-400"
-            style={fontSizeStyles.itemDetail}
+            style={resumeFontSizeStyles.itemDetail}
           >
-            <EditableText
-              value={entry.location}
-              onChange={(value) =>
-                updateExperienceEntry(entry.id, { location: value })
-              }
-              placeholder="Location"
-            />
+            {renderWithFeedback(
+              locationPath,
+              <EditableText
+                value={entry.location}
+                onChange={(value) =>
+                  updateExperienceEntry(entry.id, { location: value })
+                }
+                placeholder="Location"
+              />
+            )}
           </p>
         </div>
         {entry.bullets.length > 0 && (
           <ul
             className="mt-1 space-y-1 text-gray-600 dark:text-gray-400"
-            style={fontSizeStyles.body}
+            style={resumeFontSizeStyles.body}
             role="list"
           >
-            {entry.bullets.map((bullet, idx) => (
-              <li
-                key={idx}
-                className="group/bullet relative flex items-baseline gap-2"
-              >
-                <span
-                  aria-hidden
-                  className="self-baseline text-gray-600 dark:text-gray-400"
+            {entry.bullets.map((bullet, idx) => {
+              const aiKey = `experience-${entry.id}-bullet-${idx}`;
+              const isAiOpen = activeAiTarget === aiKey;
+              const bulletPath = `experience[${entryIndex}].bullets[${idx}]`;
+              const bulletFeedback = pickFeedback(bulletPath);
+              const bulletSuggestion = aiSuggestions[aiKey];
+              const bulletValue = bulletSuggestion?.replacement ?? bullet;
+              return (
+                <li
+                  key={idx}
+                  className="group/bullet relative flex items-baseline gap-2"
                 >
-                  •
-                </span>
-                <EditableText
-                  value={bullet}
-                  onChange={(value) =>
-                    updateExperienceBullet(entry.id, idx, value)
-                  }
-                  placeholder="Describe your accomplishment..."
-                  className="min-w-0 flex-1 break-words self-baseline block"
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-0 top-[0.1em] h-4 w-4 text-muted-foreground opacity-0 transition pointer-events-none group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto hover:text-destructive"
-                  onClick={() =>
-                    removeExperienceBullet(entry.id, idx)
-                  }
-                  aria-label="Remove bullet"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </li>
-            ))}
+                  <span
+                    aria-hidden
+                    className="self-baseline text-gray-600 dark:text-gray-400"
+                  >
+                    •
+                  </span>
+                  {bulletSuggestion ? (
+                    <StaticText
+                      value={bulletValue}
+                      className="min-w-0 flex-1 break-words self-baseline block"
+                    />
+                  ) : (
+                    <EditableText
+                      value={bulletValue}
+                      onChange={(value) =>
+                        updateExperienceBullet(entry.id, idx, value)
+                      }
+                      placeholder="Describe your accomplishment..."
+                      className="min-w-0 flex-1 break-words self-baseline block"
+                    />
+                  )}
+                  <div className="absolute right-0 top-[0.1em] z-10 flex items-center gap-1 translate-x-full">
+                    {bulletFeedback ? (
+                      <QualityIndicator
+                        feedback={bulletFeedback.feedback}
+                        path={bulletFeedback.path}
+                        onApplySuggestion={onApplySuggestion}
+                      />
+                    ) : null}
+                    {bulletSuggestion ? (
+                      <AiDecisionButtons
+                        onAccept={() =>
+                          acceptAiSuggestion(aiKey, (value) =>
+                            updateExperienceBullet(entry.id, idx, value)
+                          )
+                        }
+                        onReject={() => clearAiSuggestion(aiKey)}
+                      />
+                    ) : (
+                      <InlineAiAssist
+                        isOpen={isAiOpen}
+                        onToggle={() => toggleAiTarget(aiKey)}
+                        onSubmit={(instruction) =>
+                          requestAiReplacement(aiKey, bullet, instruction, {
+                            section: "experience",
+                            field: "bullet",
+                            company: entry.company,
+                            role: entry.jobTitle,
+                            location: entry.location,
+                            dates: `${entry.startDate} - ${entry.endDate}`,
+                          })
+                        }
+                        isLoading={Boolean(aiLoading[aiKey])}
+                        error={aiErrors[aiKey]}
+                        placeholder="Rewrite this achievement..."
+                        triggerClassName={aiTriggerClasses(
+                          isAiOpen,
+                          "group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto"
+                        )}
+                      />
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                        "h-4 w-4 text-muted-foreground transition hover:text-destructive",
+                        isAiOpen || bulletSuggestion
+                          ? "opacity-100 pointer-events-auto"
+                          : "opacity-0 pointer-events-none group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto"
+                      )}
+                      onClick={() => removeExperienceBullet(entry.id, idx)}
+                      aria-label="Remove bullet"
+                      disabled={Boolean(bulletSuggestion)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
         <Button
@@ -825,7 +1602,7 @@ export function ResumeViewer({
   const renderExperienceEmpty = () => (
     <p
       className="text-gray-500 dark:text-gray-400 italic"
-      style={fontSizeStyles.body}
+      style={resumeFontSizeStyles.body}
     >
       Add experience entries using the button above.
     </p>
@@ -845,111 +1622,251 @@ export function ResumeViewer({
       </Button>
     );
 
-  const renderProjectItem = (project: ResumeData["projects"][number]) => (
-    <div className="group space-y-1">
-      <div className="flex items-start justify-between gap-2">
-        <span
-          className="min-w-0 flex-1 font-semibold text-gray-900 dark:text-gray-100"
-          style={fontSizeStyles.itemTitle}
-        >
-          <EditableText
-            value={project.name}
-            onChange={(value) =>
-              updateProjectEntry(project.id, { name: value })
-            }
-            placeholder="Project Name"
-          />
-        </span>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-            onClick={() => removeProjectEntry(project.id)}
-            aria-label="Remove project"
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
+  const renderProjectItem = (
+    project: ResumeData["projects"][number],
+    projectIndex: number
+  ) => {
+    const descriptionAiKey = `project-${project.id}-description`;
+    const isDescriptionAiOpen = activeAiTarget === descriptionAiKey;
+    const namePath = `projects[${projectIndex}].name`;
+    const descriptionPath = `projects[${projectIndex}].description`;
+    const technologyPaths = project.technologies.map(
+      (_, index) => `projects[${projectIndex}].technologies[${index}]`
+    );
+    const descriptionFeedback = pickFeedback(descriptionPath);
+    const descriptionSuggestion = aiSuggestions[descriptionAiKey];
+    const descriptionValue =
+      descriptionSuggestion?.replacement ?? project.description;
+
+    return (
+      <div className="group space-y-1">
+        <div className="flex items-start justify-between gap-2">
           <span
-            className="text-right text-gray-500 dark:text-gray-400"
-            style={fontSizeStyles.itemMeta}
+            className="min-w-0 flex-1 font-semibold text-gray-900 dark:text-gray-100"
+            style={resumeFontSizeStyles.itemTitle}
           >
-            <EditableText
-              value={project.technologies.join(", ")}
-              onChange={(value) =>
-                updateProjectEntry(project.id, {
-                  technologies: parseCommaList(value),
-                })
-              }
-              placeholder="Technologies"
-            />
-          </span>
-        </div>
-      </div>
-      <EditableText
-        value={project.description}
-        onChange={(value) =>
-          updateProjectEntry(project.id, { description: value })
-        }
-        placeholder="Project description"
-        className="text-gray-700 dark:text-gray-300"
-        style={fontSizeStyles.body}
-        multiline
-      />
-      {project.bullets.length > 0 && (
-        <ul
-          className="mt-1 space-y-1 text-gray-600 dark:text-gray-400"
-          style={fontSizeStyles.body}
-          role="list"
-        >
-          {project.bullets.map((bullet, idx) => (
-            <li
-              key={idx}
-              className="group/bullet relative flex items-baseline gap-2"
-            >
-              <span
-                aria-hidden
-                className="self-baseline text-gray-600 dark:text-gray-400"
-              >
-                •
-              </span>
+            {renderWithFeedback(
+              namePath,
               <EditableText
-                value={bullet}
+                value={project.name}
                 onChange={(value) =>
-                  updateProjectBullet(project.id, idx, value)
+                  updateProjectEntry(project.id, { name: value })
                 }
-                placeholder="Project impact..."
-                className="min-w-0 flex-1 break-words self-baseline block"
+                placeholder="Project Name"
               />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-0 top-[0.1em] h-4 w-4 text-muted-foreground opacity-0 transition pointer-events-none group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto hover:text-destructive"
-                onClick={() => removeProjectBullet(project.id, idx)}
-                aria-label="Remove bullet"
-              >
-                <Trash2 className="h-3 w-3" />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-        onClick={() => addProjectBullet(project.id)}
-      >
-        <Plus className="h-3 w-3" />
-        Add Bullet
-      </Button>
-    </div>
-  );
+            )}
+          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+              onClick={() => removeProjectEntry(project.id)}
+              aria-label="Remove project"
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+            <span
+              className="text-right text-gray-500 dark:text-gray-400"
+              style={resumeFontSizeStyles.itemMeta}
+            >
+              {renderWithFeedback(
+                technologyPaths,
+                <EditableText
+                  value={project.technologies.join(", ")}
+                  onChange={(value) =>
+                    updateProjectEntry(project.id, {
+                      technologies: parseCommaList(value),
+                    })
+                  }
+                  placeholder="Technologies"
+                />
+              )}
+            </span>
+          </div>
+        </div>
+        <div className="group/ai relative">
+          {descriptionSuggestion ? (
+            <StaticText
+              value={descriptionValue}
+              className="text-gray-700 dark:text-gray-300"
+              style={resumeFontSizeStyles.body}
+              multiline
+            />
+          ) : (
+            <EditableText
+              value={descriptionValue}
+              onChange={(value) =>
+                updateProjectEntry(project.id, { description: value })
+              }
+              placeholder="Project description"
+              className="text-gray-700 dark:text-gray-300"
+              style={resumeFontSizeStyles.body}
+              multiline
+            />
+          )}
+          <div className="absolute right-0 top-0 z-10 flex items-center gap-1 translate-x-full">
+            {descriptionFeedback ? (
+              <QualityIndicator
+                feedback={descriptionFeedback.feedback}
+                path={descriptionFeedback.path}
+                onApplySuggestion={onApplySuggestion}
+              />
+            ) : null}
+            {descriptionSuggestion ? (
+              <AiDecisionButtons
+                onAccept={() =>
+                  acceptAiSuggestion(descriptionAiKey, (value) =>
+                    updateProjectEntry(project.id, { description: value })
+                  )
+                }
+                onReject={() => clearAiSuggestion(descriptionAiKey)}
+              />
+            ) : (
+              <InlineAiAssist
+                isOpen={isDescriptionAiOpen}
+                onToggle={() => toggleAiTarget(descriptionAiKey)}
+                onSubmit={(instruction) =>
+                  requestAiReplacement(
+                    descriptionAiKey,
+                    project.description,
+                    instruction,
+                    {
+                      section: "projects",
+                      field: "description",
+                      projectName: project.name,
+                      technologies: project.technologies,
+                      bullets: project.bullets,
+                    }
+                  )
+                }
+                isLoading={Boolean(aiLoading[descriptionAiKey])}
+                error={aiErrors[descriptionAiKey]}
+                placeholder="Rewrite this project summary..."
+                triggerClassName={aiTriggerClasses(
+                  isDescriptionAiOpen,
+                  "group-hover/ai:opacity-100 group-hover/ai:pointer-events-auto"
+                )}
+              />
+            )}
+          </div>
+        </div>
+        {project.bullets.length > 0 && (
+          <ul
+            className="mt-1 space-y-1 text-gray-600 dark:text-gray-400"
+            style={resumeFontSizeStyles.body}
+            role="list"
+          >
+            {project.bullets.map((bullet, idx) => {
+              const aiKey = `project-${project.id}-bullet-${idx}`;
+              const isAiOpen = activeAiTarget === aiKey;
+              const bulletPath = `projects[${projectIndex}].bullets[${idx}]`;
+              const bulletFeedback = pickFeedback(bulletPath);
+              const bulletSuggestion = aiSuggestions[aiKey];
+              const bulletValue = bulletSuggestion?.replacement ?? bullet;
+              return (
+                <li
+                  key={idx}
+                  className="group/bullet relative flex items-baseline gap-2"
+                >
+                  <span
+                    aria-hidden
+                    className="self-baseline text-gray-600 dark:text-gray-400"
+                  >
+                    •
+                  </span>
+                  {bulletSuggestion ? (
+                    <StaticText
+                      value={bulletValue}
+                      className="min-w-0 flex-1 break-words self-baseline block"
+                    />
+                  ) : (
+                    <EditableText
+                      value={bulletValue}
+                      onChange={(value) =>
+                        updateProjectBullet(project.id, idx, value)
+                      }
+                      placeholder="Project impact..."
+                      className="min-w-0 flex-1 break-words self-baseline block"
+                    />
+                  )}
+                  <div className="absolute right-0 top-[0.1em] z-10 flex items-center gap-1 translate-x-full">
+                    {bulletFeedback ? (
+                      <QualityIndicator
+                        feedback={bulletFeedback.feedback}
+                        path={bulletFeedback.path}
+                        onApplySuggestion={onApplySuggestion}
+                      />
+                    ) : null}
+                    {bulletSuggestion ? (
+                      <AiDecisionButtons
+                        onAccept={() =>
+                          acceptAiSuggestion(aiKey, (value) =>
+                            updateProjectBullet(project.id, idx, value)
+                          )
+                        }
+                        onReject={() => clearAiSuggestion(aiKey)}
+                      />
+                    ) : (
+                      <InlineAiAssist
+                        isOpen={isAiOpen}
+                        onToggle={() => toggleAiTarget(aiKey)}
+                        onSubmit={(instruction) =>
+                          requestAiReplacement(aiKey, bullet, instruction, {
+                            section: "projects",
+                            field: "bullet",
+                            projectName: project.name,
+                            description: project.description,
+                            technologies: project.technologies,
+                          })
+                        }
+                        isLoading={Boolean(aiLoading[aiKey])}
+                        error={aiErrors[aiKey]}
+                        placeholder="Rewrite this bullet..."
+                        triggerClassName={aiTriggerClasses(
+                          isAiOpen,
+                          "group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto"
+                        )}
+                      />
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={cn(
+                        "h-4 w-4 text-muted-foreground transition hover:text-destructive",
+                        isAiOpen || bulletSuggestion
+                          ? "opacity-100 pointer-events-auto"
+                          : "opacity-0 pointer-events-none group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto"
+                      )}
+                      onClick={() => removeProjectBullet(project.id, idx)}
+                      aria-label="Remove bullet"
+                      disabled={Boolean(bulletSuggestion)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
+          onClick={() => addProjectBullet(project.id)}
+        >
+          <Plus className="h-3 w-3" />
+          Add Bullet
+        </Button>
+      </div>
+    );
+  };
 
   const renderProjectsEmpty = () => (
     <p
       className="text-gray-500 dark:text-gray-400 italic"
-      style={fontSizeStyles.body}
+      style={resumeFontSizeStyles.body}
     >
       Add project entries using the button above.
     </p>
@@ -969,7 +1886,10 @@ export function ResumeViewer({
       </Button>
     );
 
-  const renderEducationItem = (entry: ResumeData["education"][number]) => {
+  const renderEducationItem = (
+    entry: ResumeData["education"][number],
+    entryIndex: number
+  ) => {
     const primaryField =
       educationOrder === "degree-first" ? "degree" : "institution";
     const secondaryField =
@@ -982,23 +1902,31 @@ export function ResumeViewer({
       educationOrder === "degree-first"
         ? "University Name"
         : "Degree";
+    const primaryPath = `education[${entryIndex}].${primaryField}`;
+    const secondaryPath = `education[${entryIndex}].${secondaryField}`;
+    const graduationPath = `education[${entryIndex}].graduationDate`;
+    const gpaPath = `education[${entryIndex}].gpa`;
+    const locationPath = `education[${entryIndex}].location`;
 
     return (
       <div className="group space-y-1">
         <div className="flex items-start justify-between gap-2">
           <p
             className="font-semibold text-gray-900 dark:text-gray-100"
-            style={fontSizeStyles.itemTitle}
+            style={resumeFontSizeStyles.itemTitle}
           >
-            <EditableText
-              value={entry[primaryField] ?? ""}
-              onChange={(value) =>
-                updateEducationEntry(entry.id, {
-                  [primaryField]: value,
-                } as Partial<ResumeData["education"][number]>)
-              }
-              placeholder={primaryFallback}
-            />
+            {renderWithFeedback(
+              primaryPath,
+              <EditableText
+                value={entry[primaryField] ?? ""}
+                onChange={(value) =>
+                  updateEducationEntry(entry.id, {
+                    [primaryField]: value,
+                  } as Partial<ResumeData["education"][number]>)
+                }
+                placeholder={primaryFallback}
+              />
+            )}
           </p>
           <div className="flex items-center gap-2">
             <Button
@@ -1012,64 +1940,76 @@ export function ResumeViewer({
             </Button>
             <span
               className="text-gray-600 dark:text-gray-400"
-              style={fontSizeStyles.itemMeta}
+              style={resumeFontSizeStyles.itemMeta}
             >
-              <EditableText
-                value={entry.graduationDate ?? ""}
-                onChange={(value) =>
-                  updateEducationEntry(entry.id, { graduationDate: value })
-                }
-                placeholder="Graduation"
-              />
+              {renderWithFeedback(
+                graduationPath,
+                <EditableText
+                  value={entry.graduationDate ?? ""}
+                  onChange={(value) =>
+                    updateEducationEntry(entry.id, { graduationDate: value })
+                  }
+                  placeholder="Graduation"
+                />
+              )}
             </span>
           </div>
         </div>
         <div className="flex items-start justify-between gap-2">
           <p
             className="text-gray-700 dark:text-gray-300"
-            style={fontSizeStyles.itemDetail}
+            style={resumeFontSizeStyles.itemDetail}
           >
-            <EditableText
-              value={entry[secondaryField] ?? ""}
-              onChange={(value) =>
-                updateEducationEntry(entry.id, {
-                  [secondaryField]: value,
-                } as Partial<ResumeData["education"][number]>)
-              }
-              placeholder={secondaryFallback}
-            />
+            {renderWithFeedback(
+              secondaryPath,
+              <EditableText
+                value={entry[secondaryField] ?? ""}
+                onChange={(value) =>
+                  updateEducationEntry(entry.id, {
+                    [secondaryField]: value,
+                  } as Partial<ResumeData["education"][number]>)
+                }
+                placeholder={secondaryFallback}
+              />
+            )}
             {entry.gpa && (
               <>
                 <span className="text-gray-400"> | </span>
                 <span className="inline-flex items-baseline gap-1">
                   <span
                     className="text-gray-500 dark:text-gray-400"
-                    style={fontSizeStyles.itemMeta}
+                    style={resumeFontSizeStyles.itemMeta}
                   >
                     GPA:
                   </span>
-                  <EditableText
-                    value={entry.gpa}
-                    onChange={(value) =>
-                      updateEducationEntry(entry.id, { gpa: value })
-                    }
-                    placeholder="GPA"
-                  />
+                  {renderWithFeedback(
+                    gpaPath,
+                    <EditableText
+                      value={entry.gpa}
+                      onChange={(value) =>
+                        updateEducationEntry(entry.id, { gpa: value })
+                      }
+                      placeholder="GPA"
+                    />
+                  )}
                 </span>
               </>
             )}
           </p>
           <p
             className="text-right text-gray-600 dark:text-gray-400"
-            style={fontSizeStyles.itemDetail}
+            style={resumeFontSizeStyles.itemDetail}
           >
-            <EditableText
-              value={entry.location ?? ""}
-              onChange={(value) =>
-                updateEducationEntry(entry.id, { location: value })
-              }
-              placeholder="Location"
-            />
+            {renderWithFeedback(
+              locationPath,
+              <EditableText
+                value={entry.location ?? ""}
+                onChange={(value) =>
+                  updateEducationEntry(entry.id, { location: value })
+                }
+                placeholder="Location"
+              />
+            )}
           </p>
         </div>
       </div>
@@ -1079,7 +2019,7 @@ export function ResumeViewer({
   const renderEducationEmpty = () => (
     <p
       className="text-gray-500 dark:text-gray-400 italic"
-      style={fontSizeStyles.body}
+      style={resumeFontSizeStyles.body}
     >
       Add education entries using the button above.
     </p>
@@ -1111,24 +2051,54 @@ export function ResumeViewer({
     );
 
   const renderSkillsContent = () => {
-    const renderSkillItem = (skill: SkillEntry) => (
-      <span className="inline-flex items-center gap-1 group/skill">
+    const getSkillIndex = (skillId: string) =>
+      skills.findIndex((skill) => skill.id === skillId);
+
+    const renderSkillItem = (skill: SkillEntry) => {
+      const skillIndex = getSkillIndex(skill.id);
+      const skillPath =
+        skillIndex >= 0 ? `skills[${skillIndex}].name` : null;
+      const content = (
         <EditableText
           value={skill.name}
           onChange={(value) => updateSkill(skill.id, { name: value })}
           placeholder="Skill"
         />
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-4 w-4 text-muted-foreground opacity-0 transition group-hover/skill:opacity-100 hover:text-destructive"
-          onClick={() => removeSkill(skill.id)}
-          aria-label="Remove skill"
-        >
-          <Trash2 className="h-3 w-3" />
-        </Button>
-      </span>
-    );
+      );
+
+      return (
+        <span className="inline-flex items-center gap-1 group/skill">
+          {skillPath ? renderWithFeedback(skillPath, content) : content}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-4 w-4 text-muted-foreground opacity-0 transition group-hover/skill:opacity-100 hover:text-destructive"
+            onClick={() => removeSkill(skill.id)}
+            aria-label="Remove skill"
+          >
+            <Trash2 className="h-3 w-3" />
+          </Button>
+        </span>
+      );
+    };
+
+    const renderCategoryLabel = (
+      category: string,
+      categorySkills: SkillEntry[]
+    ) => {
+      const firstSkill = categorySkills[0];
+      const categoryIndex = firstSkill ? getSkillIndex(firstSkill.id) : -1;
+      const categoryPath =
+        categoryIndex >= 0 ? `skills[${categoryIndex}].category` : null;
+      const content = (
+        <EditableText
+          value={category}
+          onChange={(value) => updateSkillCategory(category, value)}
+          placeholder="Category"
+        />
+      );
+      return categoryPath ? renderWithFeedback(categoryPath, content) : content;
+    };
 
     return (
       <div className="space-y-1">
@@ -1140,16 +2110,10 @@ export function ResumeViewer({
             >
               <p
                 className="text-gray-700 dark:text-gray-300"
-                style={fontSizeStyles.body}
+                style={resumeFontSizeStyles.body}
               >
                 <span className="font-semibold">
-                  <EditableText
-                    value={category}
-                    onChange={(value) =>
-                      updateSkillCategory(category, value)
-                    }
-                    placeholder="Category"
-                  />
+                  {renderCategoryLabel(category, categorySkills)}
                   :
                 </span>{" "}
                 {categorySkills.map((skill, index) => (
@@ -1175,7 +2139,7 @@ export function ResumeViewer({
           <div className="flex items-start justify-between gap-2">
             <p
               className="text-gray-700 dark:text-gray-300"
-              style={fontSizeStyles.body}
+              style={resumeFontSizeStyles.body}
             >
               {ungroupedSkills.map((skill, index) => (
                 <Fragment key={skill.id}>
@@ -1202,7 +2166,7 @@ export function ResumeViewer({
   const renderSkillsEmpty = () => (
     <p
       className="text-gray-500 dark:text-gray-400 italic"
-      style={fontSizeStyles.body}
+      style={resumeFontSizeStyles.body}
     >
       Add skills using the buttons above.
     </p>
@@ -1220,6 +2184,76 @@ export function ResumeViewer({
     margins: pageSettings.margins,
     elementGap: 24, // space-y-6 = 1.5rem = 24px
   });
+
+  const resumeElementDefs = useMemo(() => {
+    const defs: Array<{ id: string; isHeader: boolean }> = [];
+
+    defs.push({ id: "header", isHeader: false });
+
+    for (const section of orderedSections) {
+      if (section === "summary" && sectionVisibility.summary) {
+        defs.push({ id: "summary-header", isHeader: true });
+        defs.push({ id: "summary-content", isHeader: false });
+      } else if (section === "experience" && sectionVisibility.experience) {
+        defs.push({ id: "experience-header", isHeader: true });
+        if (experience.length === 0) {
+          defs.push({ id: "experience-empty", isHeader: false });
+        } else {
+          for (const entry of experience) {
+            defs.push({ id: `experience-${entry.id}`, isHeader: false });
+          }
+        }
+      } else if (section === "projects" && sectionVisibility.projects) {
+        defs.push({ id: "projects-header", isHeader: true });
+        if (projects.length === 0) {
+          defs.push({ id: "projects-empty", isHeader: false });
+        } else {
+          for (const project of projects) {
+            defs.push({ id: `project-${project.id}`, isHeader: false });
+          }
+        }
+      } else if (section === "education" && sectionVisibility.education) {
+        defs.push({ id: "education-header", isHeader: true });
+        if (education.length === 0) {
+          defs.push({ id: "education-empty", isHeader: false });
+        } else {
+          for (const entry of education) {
+            defs.push({ id: `education-${entry.id}`, isHeader: false });
+          }
+        }
+      } else if (section === "skills" && sectionVisibility.skills) {
+        defs.push({ id: "skills-header", isHeader: true });
+        if (skills.length === 0) {
+          defs.push({ id: "skills-empty", isHeader: false });
+        } else {
+          defs.push({ id: "skills-content", isHeader: false });
+        }
+      }
+    }
+
+    return defs;
+  }, [
+    orderedSections,
+    sectionVisibility.summary,
+    sectionVisibility.experience,
+    sectionVisibility.projects,
+    sectionVisibility.education,
+    sectionVisibility.skills,
+    experience,
+    projects,
+    education,
+    skills,
+  ]);
+
+  const coverLetterElementDefs = useMemo(
+    () => [
+      { id: "cl-sender", isHeader: false },
+      { id: "cl-date", isHeader: false },
+      { id: "cl-recipient", isHeader: false },
+      { id: "cl-body", isHeader: false },
+    ],
+    []
+  );
 
   // Build the list of measurable elements for the resume (granular for proper pagination)
   const resumeElements = useMemo(() => {
@@ -1242,13 +2276,16 @@ export function ResumeViewer({
             )}
             <h1
               className="font-bold text-gray-900 dark:text-gray-100"
-              style={fontSizeStyles.name}
+              style={resumeFontSizeStyles.name}
             >
-              <EditableText
-                value={metadata.fullName}
-                onChange={(fullName) => updateMetadata({ fullName })}
-                placeholder="Your Name"
-              />
+              {renderWithFeedback(
+                "metadata.fullName",
+                <EditableText
+                  value={metadata.fullName}
+                  onChange={(fullName) => updateMetadata({ fullName })}
+                  placeholder="Your Name"
+                />
+              )}
             </h1>
           </div>
           <div
@@ -1262,13 +2299,16 @@ export function ResumeViewer({
             )}
             <p
               className="mt-0.5 font-medium text-gray-700 dark:text-gray-300"
-              style={fontSizeStyles.subtitle}
+              style={resumeFontSizeStyles.subtitle}
             >
-              <EditableText
-                value={metadata.subtitle}
-                onChange={(subtitle) => updateMetadata({ subtitle })}
-                placeholder="Professional Title"
-              />
+              {renderWithFeedback(
+                "metadata.subtitle",
+                <EditableText
+                  value={metadata.subtitle}
+                  onChange={(subtitle) => updateMetadata({ subtitle })}
+                  placeholder="Professional Title"
+                />
+              )}
             </p>
           </div>
           <div
@@ -1282,7 +2322,7 @@ export function ResumeViewer({
             )}
             <p
               className="mt-1 text-gray-600 dark:text-gray-400"
-              style={fontSizeStyles.contact}
+              style={resumeFontSizeStyles.contact}
             >
               {(() => {
                 type ContactItem = {
@@ -1317,27 +2357,30 @@ export function ResumeViewer({
 
                 return contactItems.map((item, index) => (
                   <Fragment key={item.key}>
-                    {item.link ? (
-                      <a
-                        href={item.href}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="hover:underline underline-offset-2"
-                        onClick={(event) => event.preventDefault()}
-                      >
+                    {(() => {
+                      const feedbackPath = `metadata.contactInfo.${item.key}`;
+                      const input = (
                         <EditableText
                           value={item.value}
                           onChange={item.onChange}
                           placeholder={item.placeholder}
                         />
-                      </a>
-                    ) : (
-                      <EditableText
-                        value={item.value}
-                        onChange={item.onChange}
-                        placeholder={item.placeholder}
-                      />
-                    )}
+                      );
+                      const node = item.link ? (
+                        <a
+                          href={item.href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="hover:underline underline-offset-2"
+                          onClick={(event) => event.preventDefault()}
+                        >
+                          {input}
+                        </a>
+                      ) : (
+                        input
+                      );
+                      return renderWithFeedback(feedbackPath, node);
+                    })()}
                     {index < contactItems.length - 1 && (
                       <span className="text-gray-400"> | </span>
                     )}
@@ -1378,11 +2421,11 @@ export function ResumeViewer({
             render: renderExperienceEmpty,
           });
         } else {
-          for (const entry of experience) {
+          for (const [index, entry] of experience.entries()) {
             elements.push({
               id: `experience-${entry.id}`,
               isHeader: false,
-              render: () => renderExperienceItem(entry),
+              render: () => renderExperienceItem(entry, index),
             });
           }
         }
@@ -1400,11 +2443,11 @@ export function ResumeViewer({
             render: renderProjectsEmpty,
           });
         } else {
-          for (const project of projects) {
+          for (const [index, project] of projects.entries()) {
             elements.push({
               id: `project-${project.id}`,
               isHeader: false,
-              render: () => renderProjectItem(project),
+              render: () => renderProjectItem(project, index),
             });
           }
         }
@@ -1422,11 +2465,11 @@ export function ResumeViewer({
             render: renderEducationEmpty,
           });
         } else {
-          for (const entry of education) {
+          for (const [index, entry] of education.entries()) {
             elements.push({
               id: `education-${entry.id}`,
               isHeader: false,
-              render: () => renderEducationItem(entry),
+              render: () => renderEducationItem(entry, index),
             });
           }
         }
@@ -1470,11 +2513,13 @@ export function ResumeViewer({
     contactFieldMap,
     normalizeProfileUrl,
     headerAlignment,
-    fontSizeStyles,
+    resumeFontSizeStyles,
     getAlignmentClass,
     renderInlineAlignment,
     updateContactInfo,
     updateHeaderAlignment,
+    pickFeedback,
+    renderWithFeedback,
   ]);
 
   // Build cover letter elements
@@ -1488,7 +2533,7 @@ export function ResumeViewer({
         <div>
           <p
             className="text-gray-700 dark:text-gray-300"
-            style={fontSizeStyles.body}
+            style={coverLetterFontSizeStyles.body}
           >
             <EditableText
               value={metadata.fullName}
@@ -1519,12 +2564,12 @@ export function ResumeViewer({
         <div>
           <p
             className="text-gray-700 dark:text-gray-300"
-            style={fontSizeStyles.itemMeta}
+            style={coverLetterFontSizeStyles.itemMeta}
           >
             <EditableText
               value={coverLetter.date}
               onChange={(date) => updateCoverLetter({ date })}
-              placeholder={todayFormatted}
+              placeholder={todayFormatted || "Month Day, Year"}
             />
           </p>
         </div>
@@ -1538,7 +2583,7 @@ export function ResumeViewer({
         <div>
           <p
             className="text-gray-700 dark:text-gray-300"
-            style={fontSizeStyles.body}
+            style={coverLetterFontSizeStyles.body}
           >
             <EditableText
               value={coverLetter.hiringManager}
@@ -1564,7 +2609,7 @@ export function ResumeViewer({
         <div className="space-y-4">
           <p
             className="text-gray-700 dark:text-gray-300"
-            style={fontSizeStyles.body}
+            style={coverLetterFontSizeStyles.body}
           >
             Dear{" "}
             <EditableText
@@ -1579,12 +2624,12 @@ export function ResumeViewer({
             onChange={(body) => updateCoverLetter({ body })}
             placeholder="Your cover letter content will appear here. Use the Cover tab in the editor to write your letter."
             className="leading-relaxed text-gray-700 dark:text-gray-300"
-            style={fontSizeStyles.body}
+            style={coverLetterFontSizeStyles.body}
             multiline
           />
           <p
             className="text-gray-700 dark:text-gray-300"
-            style={fontSizeStyles.body}
+            style={coverLetterFontSizeStyles.body}
           >
             <EditableText
               value={coverLetter.sendoff}
@@ -1604,26 +2649,22 @@ export function ResumeViewer({
     });
 
     return elements;
-  }, [metadata, coverLetter, todayFormatted, fontSizeStyles]);
+  }, [metadata, coverLetter, todayFormatted, coverLetterFontSizeStyles]);
 
   // Register elements with pagination hooks
   useEffect(() => {
-    resumePagination.setElements(
-      resumeElements.map((e) => ({ id: e.id, isHeader: e.isHeader }))
-    );
-  }, [resumeElements, resumePagination.setElements]);
+    resumePagination.setElements(resumeElementDefs);
+  }, [resumeElementDefs, resumePagination.setElements]);
 
   useEffect(() => {
-    coverLetterPagination.setElements(
-      coverLetterElements.map((e) => ({ id: e.id, isHeader: e.isHeader }))
-    );
-  }, [coverLetterElements, coverLetterPagination.setElements]);
+    coverLetterPagination.setElements(coverLetterElementDefs);
+  }, [coverLetterElementDefs, coverLetterPagination.setElements]);
 
   // Map element IDs to their page assignments, defaulting to page 0 for unmeasured elements
   const resumeElementPages = useMemo(() => {
     const map = new Map<string, number>();
     // First, assign all elements to page 0 as default
-    for (const el of resumeElements) {
+    for (const el of resumeElementDefs) {
       map.set(el.id, 0);
     }
     // Then, update with actual page assignments from pagination
@@ -1633,12 +2674,12 @@ export function ResumeViewer({
       }
     }
     return map;
-  }, [resumePagination.pages, resumeElements]);
+  }, [resumePagination.pages, resumeElementDefs]);
 
   const coverLetterElementPages = useMemo(() => {
     const map = new Map<string, number>();
     // First, assign all elements to page 0 as default
-    for (const el of coverLetterElements) {
+    for (const el of coverLetterElementDefs) {
       map.set(el.id, 0);
     }
     // Then, update with actual page assignments from pagination
@@ -1648,7 +2689,7 @@ export function ResumeViewer({
       }
     }
     return map;
-  }, [coverLetterPagination.pages, coverLetterElements]);
+  }, [coverLetterPagination.pages, coverLetterElementDefs]);
 
   // Calculate paper height in pixels for page containers
   const getPageHeightStyle = (pageDimensions: { pageHeightPx: number } | null) => {
@@ -1679,25 +2720,43 @@ export function ResumeViewer({
   // Pre-create ref callbacks to satisfy eslint
   const resumeRefCallbacks = useMemo(() => {
     const callbacks = new Map<string, (el: HTMLElement | null) => void>();
-    for (const el of resumeElements) {
+    for (const el of resumeElementDefs) {
       callbacks.set(el.id, resumePagination.measureRef(el.id));
     }
     return callbacks;
-  }, [resumeElements, resumePagination.measureRef]);
+  }, [resumeElementDefs, resumePagination.measureRef]);
 
   const coverLetterRefCallbacks = useMemo(() => {
     const callbacks = new Map<string, (el: HTMLElement | null) => void>();
-    for (const el of coverLetterElements) {
+    for (const el of coverLetterElementDefs) {
       callbacks.set(el.id, coverLetterPagination.measureRef(el.id));
     }
     return callbacks;
-  }, [coverLetterElements, coverLetterPagination.measureRef]);
+  }, [coverLetterElementDefs, coverLetterPagination.measureRef]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
+      {isDebugOpen && (
+        <div className="absolute right-4 top-[60px] z-40 w-[360px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium">LLM Raw Output</p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              onClick={() => setIsDebugOpen(false)}
+            >
+              Close
+            </Button>
+          </div>
+          <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-[10px] text-muted-foreground">
+            {rawDebugJson || "No analysis yet."}
+          </pre>
+        </div>
+      )}
       <Tabs defaultValue="resume" className="flex h-full flex-col">
         <div className="flex h-[52px] items-center border-b border-border px-4">
-          <TabsList className="h-12 w-full justify-start gap-4 bg-transparent p-0">
+          <TabsList className="h-12 flex-1 justify-start gap-4 bg-transparent p-0">
             <TabsTrigger
               value="resume"
               className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none px-0 pb-3 pt-3"
@@ -1711,6 +2770,17 @@ export function ResumeViewer({
               Cover Letter
             </TabsTrigger>
           </TabsList>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              onClick={() => setIsDebugOpen((current) => !current)}
+              disabled={!analysis}
+            >
+              {isDebugOpen ? "Hide Debug" : "Debug"}
+            </Button>
+          </div>
         </div>
 
         <ScrollArea className="flex-1">
@@ -1732,7 +2802,7 @@ export function ResumeViewer({
                   style={{
                       ...paperStyle,
                       ...getPageHeightStyle(resumePagination.pageDimensions),
-                      ...paperTypographyStyle,
+                      ...resumeTypographyStyle,
                     }}
                   >
                     <div className="space-y-4">
@@ -1769,7 +2839,7 @@ export function ResumeViewer({
                   style={{
                       ...paperStyle,
                       ...getPageHeightStyle(coverLetterPagination.pageDimensions),
-                      ...paperTypographyStyle,
+                      ...coverLetterTypographyStyle,
                     }}
                   >
                     <div className="space-y-6">

@@ -68,9 +68,19 @@ export function Sidebar({ onNewApplication }: SidebarProps) {
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-9 w-9">
-                <Settings className="h-4 w-4" />
-                <span className="sr-only">Settings</span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  "h-9 w-9",
+                  pathname.startsWith("/settings") && "bg-accent"
+                )}
+                asChild
+              >
+                <Link href="/settings">
+                  <Settings className="h-4 w-4" />
+                  <span className="sr-only">Settings</span>
+                </Link>
               </Button>
             </TooltipTrigger>
             <TooltipContent side="right">

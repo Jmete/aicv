@@ -72,6 +72,13 @@ export const DEFAULT_FONT_PREFERENCES = {
   },
 } as const;
 
+export const DEFAULT_COVER_LETTER_FONT_PREFERENCES = {
+  ...DEFAULT_FONT_PREFERENCES,
+  sizes: {
+    ...DEFAULT_FONT_PREFERENCES.sizes,
+  },
+} as const;
+
 export const DEFAULT_LAYOUT_PREFERENCES: {
   experienceOrder: "title-first" | "company-first";
   educationOrder: "degree-first" | "institution-first";
@@ -95,6 +102,19 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
       body: number;
     };
   };
+  coverLetterFontPreferences: {
+    family: "serif" | "sans" | "mono";
+    sizes: {
+      name: number;
+      subtitle: number;
+      contact: number;
+      sectionTitle: number;
+      itemTitle: number;
+      itemDetail: number;
+      itemMeta: number;
+      body: number;
+    };
+  };
 } = {
   experienceOrder: "title-first",
   educationOrder: "degree-first",
@@ -102,6 +122,7 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
   contactOrder: DEFAULT_CONTACT_ORDER,
   headerAlignment: DEFAULT_HEADER_ALIGNMENT,
   fontPreferences: DEFAULT_FONT_PREFERENCES,
+  coverLetterFontPreferences: DEFAULT_COVER_LETTER_FONT_PREFERENCES,
 };
 
 export const DEFAULT_COVER_LETTER = {

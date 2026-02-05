@@ -51,7 +51,7 @@
   --ring: 35 20% 70%;
 
   /* Paper-specific variables for dark mode */
-  --paper: 20 14% 12%;
+  --paper: 0 0% 100%;
   --paper-shadow: 0 0% 0% / 0.3;
   --sidebar-bg: 20 14% 6%;
 }
@@ -99,6 +99,10 @@ body {
   box-shadow: 0 4px 6px -1px hsl(var(--paper-shadow)),
               0 2px 4px -2px hsl(var(--paper-shadow));
   font-family: Georgia, 'Times New Roman', serif;
+}
+
+.dark .document-paper {
+  --paper: 0 0% 100%;
 }
 
 /* Focus visible styling */

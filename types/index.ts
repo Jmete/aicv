@@ -32,3 +32,4 @@ export interface ApplicationSkill {
 export type ApplicationStatus = Application["status"];
 
 export * from "./resume";
+export * from "./resume-analysis";

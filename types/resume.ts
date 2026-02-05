@@ -101,6 +101,7 @@ export interface LayoutPreferences {
   contactOrder: ContactFieldKey[];
   headerAlignment: HeaderAlignment;
   fontPreferences: FontPreferences;
+  coverLetterFontPreferences: FontPreferences;
 }
 
 export interface SkillEntry {

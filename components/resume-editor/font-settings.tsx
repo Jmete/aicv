@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -9,11 +10,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { FontPreferences } from "@/types";
 
 interface FontSettingsProps {
-  preferences: FontPreferences;
-  onChange: (preferences: FontPreferences) => void;
+  resumePreferences: FontPreferences;
+  coverLetterPreferences: FontPreferences;
+  onResumeChange: (preferences: FontPreferences) => void;
+  onCoverLetterChange: (preferences: FontPreferences) => void;
 }
 
 const FONT_SIZE_FIELDS = [
@@ -33,19 +37,49 @@ const FONT_FAMILY_LABELS = {
   mono: "Mono (Technical)",
 } as const;
 
+const FONT_TARGETS = [
+  { key: "resume", label: "Resume" },
+  { key: "cover-letter", label: "Cover Letter" },
+] as const;
+
 const MIN_FONT_SIZE = 8;
 const MAX_FONT_SIZE = 36;
 
 type FontSizeKey = (typeof FONT_SIZE_FIELDS)[number]["key"];
+type FontTarget = (typeof FONT_TARGETS)[number]["key"];
+
+const COVER_LETTER_FONT_FIELDS: Array<{ key: FontSizeKey; label: string }> = [
+  { key: "itemMeta", label: "Date" },
+  { key: "body", label: "Body" },
+];
 
 const clampFontSize = (value: number) =>
   Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, value));
 
-export function FontSettings({ preferences, onChange }: FontSettingsProps) {
+export function FontSettings({
+  resumePreferences,
+  coverLetterPreferences,
+  onResumeChange,
+  onCoverLetterChange,
+}: FontSettingsProps) {
+  const [activeTarget, setActiveTarget] = useState<FontTarget>("resume");
+  const activePreferences =
+    activeTarget === "resume" ? resumePreferences : coverLetterPreferences;
+  const activeFields =
+    activeTarget === "resume" ? FONT_SIZE_FIELDS : COVER_LETTER_FONT_FIELDS;
+
+  const commitPreferences = (nextPreferences: FontPreferences) => {
+    if (activeTarget === "resume") {
+      onResumeChange(nextPreferences);
+    } else {
+      onCoverLetterChange(nextPreferences);
+    }
+  };
+
   const handleFontFamilyChange = (value: string) => {
     if (!value) return;
-    onChange({
-      ...preferences,
+    commitPreferences({
+      ...activePreferences,
       family: value as FontPreferences["family"],
     });
   };
@@ -54,10 +88,10 @@ export function FontSettings({ preferences, onChange }: FontSettingsProps) {
     if (rawValue === "") return;
     const parsed = Number.parseFloat(rawValue);
     if (!Number.isFinite(parsed)) return;
-    onChange({
-      ...preferences,
+    commitPreferences({
+      ...activePreferences,
       sizes: {
-        ...preferences.sizes,
+        ...activePreferences.sizes,
         [key]: clampFontSize(parsed),
       },
     });
@@ -65,20 +99,47 @@ export function FontSettings({ preferences, onChange }: FontSettingsProps) {
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-3">
-      <div className="space-y-1">
-        <h3 className="text-xs font-medium text-foreground">
-          Fonts & Size
-        </h3>
-        <p className="text-[11px] text-muted-foreground">
-          Tune the typography for each resume section.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h3 className="text-xs font-medium text-foreground">
+            Fonts & Size
+          </h3>
+          <p className="text-[11px] text-muted-foreground">
+            Tune the typography for the selected document.
+          </p>
+        </div>
+        <ToggleGroup
+          type="single"
+          value={activeTarget}
+          onValueChange={(value) => {
+            if (!value) return;
+            setActiveTarget(value as FontTarget);
+          }}
+          size="sm"
+          variant="outline"
+          className="shrink-0"
+          aria-label="Font settings target"
+        >
+          {FONT_TARGETS.map((target) => (
+            <ToggleGroupItem
+              key={target.key}
+              value={target.key}
+              className="h-7 px-2 text-[11px]"
+            >
+              {target.label}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
       </div>
 
       <div className="space-y-1.5">
         <Label className="text-[11px] text-muted-foreground">
           Font Family
         </Label>
-        <Select value={preferences.family} onValueChange={handleFontFamilyChange}>
+        <Select
+          value={activePreferences.family}
+          onValueChange={handleFontFamilyChange}
+        >
           <SelectTrigger className="h-8 text-xs">
             <SelectValue />
           </SelectTrigger>
@@ -93,7 +154,7 @@ export function FontSettings({ preferences, onChange }: FontSettingsProps) {
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        {FONT_SIZE_FIELDS.map((field) => (
+        {activeFields.map((field) => (
           <div key={field.key} className="space-y-1">
             <Label className="text-[11px] text-muted-foreground">
               {field.label}
@@ -105,7 +166,7 @@ export function FontSettings({ preferences, onChange }: FontSettingsProps) {
                 max={MAX_FONT_SIZE}
                 step={0.5}
                 inputMode="decimal"
-                value={preferences.sizes[field.key]}
+                value={activePreferences.sizes[field.key]}
                 onChange={(event) =>
                   handleFontSizeChange(field.key, event.target.value)
                 }

@@ -7,6 +7,14 @@ const dbPath = path.join(process.cwd(), "data", "aicv.db");
 
 const sqlite = new Database(dbPath);
 sqlite.pragma("journal_mode = WAL");
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS resume_data (
+    id INTEGER PRIMARY KEY,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+`);
 
 export const db = drizzle(sqlite, { schema });
 

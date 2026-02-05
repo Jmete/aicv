@@ -12,17 +12,24 @@ import { HeaderAlignmentEditor } from "./header-alignment-editor";
 import { MetadataEditor } from "./metadata-editor";
 import { PageSettings } from "./page-settings";
 import { ProjectsEditor } from "./projects-editor";
+import { ResumeImportPanel } from "./resume-import";
 import { SectionVisibility } from "./section-visibility";
 import { SkillsEditor } from "./skills-editor";
 
 interface ResumeEditorPanelProps {
   resumeData: ResumeData;
   onResumeUpdate: (data: ResumeData) => void;
+  onImportResume: (file: File) => Promise<void>;
+  isImportingResume: boolean;
+  importError?: string | null;
 }
 
 export function ResumeEditorPanel({
   resumeData,
   onResumeUpdate,
+  onImportResume,
+  isImportingResume,
+  importError,
 }: ResumeEditorPanelProps) {
   const layoutPreferences = {
     ...DEFAULT_LAYOUT_PREFERENCES,
@@ -40,6 +47,14 @@ export function ResumeEditorPanel({
       sizes: {
         ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences.sizes,
         ...resumeData.layoutPreferences?.fontPreferences?.sizes,
+      },
+    },
+    coverLetterFontPreferences: {
+      ...DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences,
+      ...resumeData.layoutPreferences?.coverLetterFontPreferences,
+      sizes: {
+        ...DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences.sizes,
+        ...resumeData.layoutPreferences?.coverLetterFontPreferences?.sizes,
       },
     },
   };
@@ -97,6 +112,11 @@ export function ResumeEditorPanel({
         <ScrollArea className="flex-1">
           <TabsContent value="info" className="m-0 p-4">
             <div className="space-y-4">
+              <ResumeImportPanel
+                onImport={onImportResume}
+                isImporting={isImportingResume}
+                error={importError}
+              />
               <MetadataEditor
                 metadata={resumeData.metadata}
                 contactOrder={layoutPreferences.contactOrder}
@@ -153,13 +173,23 @@ export function ResumeEditorPanel({
                 }
               />
               <FontSettings
-                preferences={layoutPreferences.fontPreferences}
-                onChange={(fontPreferences) =>
+                resumePreferences={layoutPreferences.fontPreferences}
+                coverLetterPreferences={layoutPreferences.coverLetterFontPreferences}
+                onResumeChange={(fontPreferences) =>
                   onResumeUpdate({
                     ...resumeData,
                     layoutPreferences: {
                       ...layoutPreferences,
                       fontPreferences,
+                    },
+                  })
+                }
+                onCoverLetterChange={(coverLetterFontPreferences) =>
+                  onResumeUpdate({
+                    ...resumeData,
+                    layoutPreferences: {
+                      ...layoutPreferences,
+                      coverLetterFontPreferences,
                     },
                   })
                 }
