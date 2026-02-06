@@ -15,6 +15,7 @@ export interface UsePaginationOptions {
   margins: PageMargins;
   debounceMs?: number;
   elementGap?: number; // Gap between elements in pixels (e.g., 16 for space-y-4)
+  headerElementGap?: number; // Optional smaller gap after headers
 }
 
 export interface ElementDefinition {
@@ -39,7 +40,13 @@ export interface UsePaginationResult {
 export function usePagination(
   options: UsePaginationOptions
 ): UsePaginationResult {
-  const { paperSize, margins, debounceMs = 100, elementGap = 0 } = options;
+  const {
+    paperSize,
+    margins,
+    debounceMs = 100,
+    elementGap = 0,
+    headerElementGap = elementGap,
+  } = options;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const elementsRef = useRef<Map<string, HTMLElement>>(new Map());
@@ -75,9 +82,14 @@ export function usePagination(
       }
     }
 
-    const newPages = assignElementsToPages(measurements, dimensions.contentHeightPx, elementGap);
+    const newPages = assignElementsToPages(
+      measurements,
+      dimensions.contentHeightPx,
+      elementGap,
+      headerElementGap
+    );
     setPages(newPages);
-  }, [containerWidth, paperSize, margins, elementGap]);
+  }, [containerWidth, paperSize, margins, elementGap, headerElementGap]);
 
   const scheduleRecalculate = useCallback(() => {
     if (timeoutRef.current) {

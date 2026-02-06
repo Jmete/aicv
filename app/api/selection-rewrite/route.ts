@@ -4,12 +4,28 @@ import path from "node:path";
 import { z } from "zod";
 import { generateObject, jsonSchema } from "ai";
 import { openai } from "@ai-sdk/openai";
+import {
+  estimateWrappedLineCount,
+  type FieldLengthConstraint,
+} from "@/lib/line-constraints";
 
 export const runtime = "nodejs";
+const MAX_REWRITE_ATTEMPTS = 3;
 
 const fieldSchema = z.object({
   path: z.string(),
   text: z.string(),
+  lengthConstraint: z
+    .object({
+      maxLines: z.number().int().positive(),
+      maxCharsPerLine: z.number().int().positive(),
+      maxCharsTotal: z.number().int().positive(),
+      availableWidthPx: z.number().positive(),
+      fontSizePx: z.number().positive(),
+      fontFamily: z.string().min(1),
+      safetyBuffer: z.number().positive().max(1),
+    })
+    .optional(),
 });
 
 const requestSchema = z.object({
@@ -94,6 +110,54 @@ const getPrompt = async () => {
 const sanitize = (value: string) =>
   value.replace(/\u0000/g, "").replace(/\r\n/g, "\n").trim();
 
+type RewriteOperation = z.infer<typeof operationSchema>;
+
+type ConstraintViolation = {
+  path: string;
+  maxLines: number;
+  maxCharsPerLine: number;
+  maxCharsTotal: number;
+  wrappedLines: number;
+  charCount: number;
+};
+
+const normalizeOperations = (operations: RewriteOperation[]) =>
+  operations.map((operation) => ({
+    ...operation,
+    value: sanitize(operation.value),
+  }));
+
+const getLengthConstraintViolations = (
+  operations: z.infer<typeof operationSchema>[],
+  constraints: Map<string, FieldLengthConstraint>
+) => {
+  const violations: ConstraintViolation[] = [];
+  for (const operation of operations) {
+    if (operation.op !== "replace") continue;
+    const constraint = constraints.get(operation.path);
+    if (!constraint) continue;
+    const value = sanitize(operation.value);
+    const wrappedLines = estimateWrappedLineCount(
+      value,
+      constraint.maxCharsPerLine
+    );
+    if (
+      value.length > constraint.maxCharsTotal ||
+      wrappedLines > constraint.maxLines
+    ) {
+      violations.push({
+        path: operation.path,
+        maxLines: constraint.maxLines,
+        maxCharsPerLine: constraint.maxCharsPerLine,
+        maxCharsTotal: constraint.maxCharsTotal,
+        wrappedLines,
+        charCount: value.length,
+      });
+    }
+  }
+  return violations;
+};
+
 export async function POST(request: Request) {
   try {
     const payload = await request.json();
@@ -108,27 +172,123 @@ export async function POST(request: Request) {
 
     const { instruction, fields, scope } = parsed.data;
     const system = await getPrompt();
+    const constrainedFields = fields
+      .filter((field) => Boolean(field.lengthConstraint))
+      .map((field) => ({
+        path: field.path,
+        constraint: field.lengthConstraint,
+      }));
+    const constraintMessage =
+      constrainedFields.length === 0
+        ? "Length constraints: none."
+        : `Length constraints:\n${JSON.stringify(constrainedFields, null, 2)}\n\nFor every replace operation on a constrained path, strictly satisfy that path's maxLines and maxCharsTotal limits.`;
 
-    const result = await generateObject({
-      model: openai("gpt-5-nano"),
-      system,
-      prompt: `Instruction:\n${sanitize(instruction)}\n\nScope:\n${JSON.stringify(
-        scope,
-        null,
-        2
-      )}\n\nSelected fields:\n${JSON.stringify(fields, null, 2)}`,
-      schema: responseJsonSchema,
-    });
+    const constraintMap = new Map<string, FieldLengthConstraint>();
+    for (const field of fields) {
+      if (field.lengthConstraint) {
+        constraintMap.set(field.path, field.lengthConstraint);
+      }
+    }
 
-    const validated = responseValidationSchema.safeParse(result.object);
-    if (!validated.success) {
+    const basePrompt = `Instruction:\n${sanitize(instruction)}\n\nScope:\n${JSON.stringify(
+      scope,
+      null,
+      2
+    )}\n\nSelected fields:\n${JSON.stringify(
+      fields.map((field) => ({
+        path: field.path,
+        text: field.text,
+      })),
+      null,
+      2
+    )}\n\n${constraintMessage}`;
+
+    let repairedOperations: RewriteOperation[] | null = null;
+    let lastViolations: ConstraintViolation[] = [];
+    let draftOperations: RewriteOperation[] | null = null;
+    let repairGuidance = "";
+    let lastFailure: "schema" | "constraint" | null = null;
+
+    for (let attempt = 1; attempt <= MAX_REWRITE_ATTEMPTS; attempt += 1) {
+      const result = await generateObject({
+        model: openai("gpt-5-nano"),
+        system,
+        prompt: [
+          basePrompt,
+          draftOperations
+            ? `Previous draft operations to revise:\n${JSON.stringify(
+                { operations: draftOperations },
+                null,
+                2
+              )}`
+            : "",
+          repairGuidance,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+        schema: responseJsonSchema,
+      });
+
+      const validated = responseValidationSchema.safeParse(result.object);
+      if (!validated.success) {
+        lastFailure = "schema";
+        repairGuidance =
+          "Your previous output did not match the required JSON schema. Return only valid operations JSON.";
+        draftOperations = null;
+        continue;
+      }
+
+      const normalizedOperations = normalizeOperations(validated.data.operations);
+      const violations =
+        constraintMap.size > 0
+          ? getLengthConstraintViolations(normalizedOperations, constraintMap)
+          : [];
+
+      if (violations.length === 0) {
+        repairedOperations = normalizedOperations;
+        break;
+      }
+
+      draftOperations = normalizedOperations;
+      lastViolations = violations;
+      lastFailure = "constraint";
+      repairGuidance = `Your previous draft violated length constraints on these paths:\n${violations
+        .map(
+          (violation) =>
+            `- ${violation.path}: chars ${violation.charCount}/${violation.maxCharsTotal}; wrapped lines ${violation.wrappedLines}/${violation.maxLines}; maxCharsPerLine=${violation.maxCharsPerLine}`
+        )
+        .join(
+          "\n"
+        )}\nReturn a full operations array again. Keep all operations valid, but aggressively shorten only the violating replace values until every limit is satisfied.`;
+    }
+
+    if (!repairedOperations) {
+      if (lastFailure === "schema") {
+        return NextResponse.json(
+          { error: "AI returned invalid operations." },
+          { status: 500 }
+        );
+      }
       return NextResponse.json(
-        { error: "AI returned invalid operations." },
-        { status: 500 }
+        {
+          error:
+            "AI exceeded the selected max-lines limit. Try regenerating or increase the line limit.",
+          details:
+            lastViolations.length > 0
+              ? lastViolations.map((violation) => ({
+                  path: violation.path,
+                  maxLines: violation.maxLines,
+                  wrappedLines: violation.wrappedLines,
+                  maxCharsTotal: violation.maxCharsTotal,
+                  charCount: violation.charCount,
+                }))
+              : undefined,
+        },
+        { status: 422 }
       );
     }
 
-    return NextResponse.json({ operations: validated.data.operations });
+    return NextResponse.json({ operations: repairedOperations });
   } catch (error) {
     console.error("Error rewriting selection:", error);
     return NextResponse.json(

@@ -5,6 +5,10 @@ Goal
 - Never hallucinate. Do not invent companies, titles, dates, metrics, skills, or achievements.
 - If a field is missing, return an empty string (for text) or an empty array (for lists).
 - Do not suggest adding optional contact fields that are missing unless the resume explicitly mentions them.
+- For skills extraction, default to ungrouped skills:
+  - Extract each skill as its own `skills[i]` entry with `name` filled.
+  - Set `skills[i].category` to an empty string unless the resume explicitly groups skills under a named heading (for example, "Languages", "Frameworks", "Tools").
+  - Do not infer or invent skill groups/categories from context.
 
 Output
 Return JSON that matches the schema exactly.

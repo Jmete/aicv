@@ -9,8 +9,13 @@ export type { ContactFieldKey };
 
 export interface PageSettings {
   paperSize: PaperSize;
-  margins: PageMargins;
-  marginPreset: MarginPreset;
+  resumeMargins: PageMargins;
+  resumeMarginPreset: MarginPreset;
+  coverLetterMargins: PageMargins;
+  coverLetterMarginPreset: MarginPreset;
+  // Legacy shared margin fields used by older saved data.
+  margins?: PageMargins;
+  marginPreset?: MarginPreset;
 }
 
 export interface ContactInfo {
@@ -102,6 +107,7 @@ export interface LayoutPreferences {
   headerAlignment: HeaderAlignment;
   fontPreferences: FontPreferences;
   coverLetterFontPreferences: FontPreferences;
+  hyperlinkUnderline: boolean;
 }
 
 export interface SkillEntry {
@@ -118,6 +124,15 @@ export interface CoverLetterData {
   sendoff: string;
 }
 
+export interface TextHyperlink {
+  id: string;
+  path: string;
+  start: number;
+  end: number;
+  text: string;
+  url: string;
+}
+
 export interface ResumeData {
   pageSettings: PageSettings;
   metadata: ResumeMetadata;
@@ -128,4 +143,5 @@ export interface ResumeData {
   projects: ProjectEntry[];
   education: EducationEntry[];
   skills: SkillEntry[];
+  hyperlinks?: TextHyperlink[];
 }

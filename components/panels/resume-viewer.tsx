@@ -1,8 +1,10 @@
 "use client";
 
 import {
+  createContext,
   Fragment,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -20,12 +22,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { DEFAULT_LAYOUT_PREFERENCES, PAPER_DIMENSIONS } from "@/lib/resume-defaults";
+import {
+  DEFAULT_LAYOUT_PREFERENCES,
+  DEFAULT_PAGE_SETTINGS,
+  PAPER_DIMENSIONS,
+} from "@/lib/resume-defaults";
 import {
   applyReplacementTemplate,
   parseFieldPath,
   setResumeValueAtPath,
 } from "@/lib/resume-analysis";
+import {
+  estimateWrappedLineCount,
+  getFontSafetyBuffer,
+  type FieldLengthConstraint,
+} from "@/lib/line-constraints";
 import { cn } from "@/lib/utils";
 import type {
   ContactFieldKey,
@@ -35,6 +46,7 @@ import type {
   ResumeAnalysisState,
   SectionKey,
   SkillEntry,
+  TextHyperlink,
   TextAlignment,
 } from "@/types";
 import {
@@ -42,14 +54,16 @@ import {
   AlignLeft,
   AlignRight,
   AlertCircle,
-  Check,
   ChevronDown,
   ChevronUp,
+  Eye,
+  EyeOff,
+  FileDown,
+  Link2,
   Loader2,
   Plus,
   Sparkles,
   Trash2,
-  X,
 } from "lucide-react";
 import { usePagination } from "@/hooks/use-pagination";
 
@@ -98,13 +112,6 @@ const FONT_FAMILY_MAP: Record<FontFamily, string> = {
   mono: "var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
 };
 
-const AI_SUGGESTIONS = [
-  "Make this shorter",
-  "Sound more professional",
-  "Add impact metrics",
-  "Clarify the scope",
-] as const;
-
 interface ResumeViewerProps {
   resumeData: ResumeData;
   onResumeUpdate: (data: ResumeData) => void;
@@ -131,6 +138,63 @@ const normalizeText = (value: string, multiline: boolean) => {
   return multiline ? normalized : normalized.replace(/\n+/g, " ");
 };
 
+type HyperlinkContextValue = {
+  isPrintPreviewMode: boolean;
+  hyperlinksByPath: Map<string, TextHyperlink[]>;
+  hyperlinkUnderlineEnabled: boolean;
+};
+
+const HyperlinkContext = createContext<HyperlinkContextValue>({
+  isPrintPreviewMode: false,
+  hyperlinksByPath: new Map(),
+  hyperlinkUnderlineEnabled: true,
+});
+
+const normalizeHyperlinkUrl = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const hasKnownPrefix = /^(https?:\/\/|mailto:|tel:)/i.test(trimmed);
+  const emailLike = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+  const candidate = hasKnownPrefix
+    ? trimmed
+    : emailLike
+      ? `mailto:${trimmed}`
+      : `https://${trimmed}`;
+
+  try {
+    const parsed = new URL(candidate);
+    if (!["http:", "https:", "mailto:", "tel:"].includes(parsed.protocol)) {
+      return null;
+    }
+    if (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      !parsed.hostname
+    ) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+};
+
+const isHyperlinkRangeValid = (
+  value: string,
+  hyperlink: Pick<TextHyperlink, "start" | "end" | "text">
+) => {
+  if (!Number.isInteger(hyperlink.start) || !Number.isInteger(hyperlink.end)) {
+    return false;
+  }
+  if (hyperlink.start < 0 || hyperlink.end <= hyperlink.start) {
+    return false;
+  }
+  if (hyperlink.end > value.length) {
+    return false;
+  }
+  return value.slice(hyperlink.start, hyperlink.end) === hyperlink.text;
+};
+
 function EditableText({
   value,
   onChange,
@@ -140,9 +204,62 @@ function EditableText({
   multiline = false,
   fieldPath,
 }: EditableTextProps) {
+  const { isPrintPreviewMode, hyperlinksByPath, hyperlinkUnderlineEnabled } =
+    useContext(HyperlinkContext);
   const ref = useRef<HTMLSpanElement>(null);
   const [isEditing, setIsEditing] = useState(false);
   const normalizedValue = normalizeText(value, multiline);
+  const fieldHyperlinks = useMemo(() => {
+    if (!fieldPath) return [] as TextHyperlink[];
+    return hyperlinksByPath.get(fieldPath) ?? [];
+  }, [fieldPath, hyperlinksByPath]);
+
+  const linkedSegments = useMemo(() => {
+    if (fieldHyperlinks.length === 0) {
+      return [{ id: "plain-0", text: normalizedValue, url: null as string | null }];
+    }
+    const segments: Array<{ id: string; text: string; url: string | null }> = [];
+    const sorted = [...fieldHyperlinks].sort((a, b) => a.start - b.start);
+    let cursor = 0;
+
+    for (const hyperlink of sorted) {
+      if (hyperlink.start > cursor) {
+        segments.push({
+          id: `plain-${cursor}`,
+          text: normalizedValue.slice(cursor, hyperlink.start),
+          url: null,
+        });
+      }
+      segments.push({
+        id: hyperlink.id,
+        text: normalizedValue.slice(hyperlink.start, hyperlink.end),
+        url: hyperlink.url,
+      });
+      cursor = hyperlink.end;
+    }
+
+    if (cursor < normalizedValue.length) {
+      segments.push({
+        id: `plain-${cursor}`,
+        text: normalizedValue.slice(cursor),
+        url: null,
+      });
+    }
+
+    return segments.filter((segment) => segment.text.length > 0);
+  }, [fieldHyperlinks, normalizedValue]);
+
+  const hasLinkedSegments = linkedSegments.some((segment) => Boolean(segment.url));
+  const linkedRenderKey = useMemo(
+    () =>
+      fieldHyperlinks
+        .map(
+          (hyperlink) =>
+            `${hyperlink.id}:${hyperlink.start}:${hyperlink.end}:${hyperlink.url}`
+        )
+        .join("|"),
+    [fieldHyperlinks]
+  );
 
   useEffect(() => {
     if (!ref.current || isEditing) return;
@@ -150,6 +267,11 @@ function EditableText({
       ref.current.textContent = normalizedValue;
     }
   }, [normalizedValue, isEditing]);
+
+  useEffect(() => {
+    if (!isEditing || !ref.current) return;
+    ref.current.focus();
+  }, [isEditing]);
 
   const commit = () => {
     if (!ref.current) return;
@@ -172,8 +294,67 @@ function EditableText({
     document.execCommand("insertText", false, normalizeText(text, multiline));
   };
 
+  if (hasLinkedSegments && !isEditing) {
+    return (
+      <span
+        key={`linked-${fieldPath ?? "field"}-${linkedRenderKey}`}
+        className={cn(
+          "editable-field",
+          multiline
+            ? "block whitespace-pre-line break-words"
+            : "inline-block max-w-full break-words align-baseline",
+          className
+        )}
+        style={style}
+        data-field-path={fieldPath}
+        data-placeholder={placeholder}
+        role="textbox"
+        aria-label={placeholder || "Editable text"}
+        tabIndex={isPrintPreviewMode ? -1 : 0}
+        onDoubleClick={() => {
+          if (isPrintPreviewMode) return;
+          setIsEditing(true);
+        }}
+        onKeyDown={(event) => {
+          if (isPrintPreviewMode) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            setIsEditing(true);
+          }
+        }}
+      >
+        {linkedSegments.map((segment) =>
+          segment.url ? (
+            <a
+              key={segment.id}
+              href={segment.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "resume-inline-link underline-offset-2",
+                hyperlinkUnderlineEnabled
+                  ? "underline decoration-gray-500/70"
+                  : "no-underline"
+              )}
+              onClick={(event) => {
+                if (!isPrintPreviewMode) {
+                  event.preventDefault();
+                }
+              }}
+            >
+              {segment.text}
+            </a>
+          ) : (
+            <Fragment key={segment.id}>{segment.text}</Fragment>
+          )
+        )}
+      </span>
+    );
+  }
+
   return (
     <span
+      key={`editable-${fieldPath ?? "field"}`}
       ref={ref}
       className={cn(
         "editable-field",
@@ -183,22 +364,28 @@ function EditableText({
         className
       )}
       style={style}
-      contentEditable
+      contentEditable={!isPrintPreviewMode}
       suppressContentEditableWarning
       data-field-path={fieldPath}
       data-placeholder={placeholder}
-      onInput={commit}
+      onInput={isPrintPreviewMode ? undefined : commit}
       onBlur={() => {
         setIsEditing(false);
-        commit();
+        if (!isPrintPreviewMode) {
+          commit();
+        }
       }}
-      onFocus={() => setIsEditing(true)}
+      onFocus={() => {
+        if (!isPrintPreviewMode) {
+          setIsEditing(true);
+        }
+      }}
       onKeyDown={handleKeyDown}
-      onPaste={handlePaste}
+      onPaste={isPrintPreviewMode ? undefined : handlePaste}
       role="textbox"
       aria-label={placeholder || "Editable text"}
-      tabIndex={0}
-      spellCheck
+      tabIndex={isPrintPreviewMode ? -1 : 0}
+      spellCheck={!isPrintPreviewMode}
     />
   );
 }
@@ -206,47 +393,18 @@ function EditableText({
 interface InlineAiAssistProps {
   isOpen: boolean;
   onToggle: () => void;
-  onSubmit: (prompt: string) => void;
-  isLoading?: boolean;
-  error?: string | null;
-  placeholder?: string;
   className?: string;
   triggerClassName?: string;
-  panelClassName?: string;
+  ariaLabel?: string;
 }
 
 function InlineAiAssist({
   isOpen,
   onToggle,
-  onSubmit,
-  isLoading = false,
-  error,
-  placeholder = "Ask AI to refine this...",
   className,
   triggerClassName,
-  panelClassName,
+  ariaLabel = "AI suggestions",
 }: InlineAiAssistProps) {
-  const [prompt, setPrompt] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (isOpen) {
-      inputRef.current?.focus();
-    }
-  }, [isOpen]);
-
-  const applySuggestion = (suggestion: string) => {
-    setPrompt(suggestion);
-    requestAnimationFrame(() => inputRef.current?.focus());
-  };
-
-  const submit = () => {
-    const trimmed = prompt.trim();
-    if (!trimmed || isLoading) return;
-    onSubmit(trimmed);
-    setPrompt("");
-  };
-
   return (
     <div className={cn("relative", className)}>
       <Button
@@ -259,142 +417,12 @@ function InlineAiAssist({
         )}
         onClick={(event) => {
           event.stopPropagation();
-          if (isOpen) {
-            setPrompt("");
-          }
           onToggle();
         }}
-        aria-label="AI suggestions"
+        aria-label={ariaLabel}
+        aria-pressed={isOpen}
       >
         <Sparkles className="h-3.5 w-3.5" />
-      </Button>
-      {isOpen && (
-        <div
-          className={cn(
-            "absolute right-0 top-full z-50 mt-2 w-72 rounded-md border border-border bg-white p-2 shadow-lg",
-            panelClassName
-          )}
-        >
-          <Input
-            ref={inputRef}
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder={placeholder}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                submit();
-              }
-            }}
-            className="h-8 rounded-sm bg-white text-[11px] text-gray-900 placeholder:text-gray-500 focus-visible:ring-1 dark:bg-white dark:text-gray-900"
-          />
-          <div className="mt-2 flex flex-wrap gap-1">
-            {AI_SUGGESTIONS.map((suggestion) => (
-              <Button
-                key={suggestion}
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-6 rounded-full border-neutral-200 bg-white px-2.5 text-[10px] font-medium text-gray-700 hover:bg-neutral-100 hover:text-gray-900 dark:border-neutral-200 dark:bg-white dark:text-gray-700 dark:hover:bg-neutral-100"
-                onClick={() => applySuggestion(suggestion)}
-              >
-                {suggestion}
-              </Button>
-            ))}
-          </div>
-          <div className="mt-2 flex items-center justify-between">
-            <span
-              className={cn(
-                "text-[10px]",
-                error ? "text-destructive" : "text-muted-foreground"
-              )}
-            >
-              {error || "Press Enter to run."}
-            </span>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="h-6 px-2 text-[10px]"
-              onClick={submit}
-              disabled={isLoading || !prompt.trim()}
-            >
-              {isLoading ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                "Generate"
-              )}
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface StaticTextProps {
-  value: string;
-  className?: string;
-  style?: CSSProperties;
-  multiline?: boolean;
-  fieldPath?: string;
-}
-
-function StaticText({
-  value,
-  className,
-  style,
-  multiline = false,
-  fieldPath,
-}: StaticTextProps) {
-  return (
-    <span
-      className={cn(
-        multiline
-          ? "block whitespace-pre-line break-words"
-          : "inline-block max-w-full break-words align-baseline",
-        className
-      )}
-      style={style}
-      data-field-path={fieldPath}
-    >
-      {value}
-    </span>
-  );
-}
-
-interface AiDecisionButtonsProps {
-  onAccept: () => void;
-  onReject: () => void;
-  className?: string;
-}
-
-function AiDecisionButtons({
-  onAccept,
-  onReject,
-  className,
-}: AiDecisionButtonsProps) {
-  return (
-    <div className={cn("flex items-center gap-1", className)}>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="h-5 w-5 text-emerald-600 hover:text-emerald-700"
-        onClick={onAccept}
-        aria-label="Accept AI replacement"
-      >
-        <Check className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="h-5 w-5 text-rose-600 hover:text-rose-700"
-        onClick={onReject}
-        aria-label="Reject AI replacement"
-      >
-        <X className="h-3.5 w-3.5" />
       </Button>
     </div>
   );
@@ -432,14 +460,26 @@ function ReplacementEditor({
 
 type FieldFeedback = ResumeAnalysisState["fieldFeedback"][number];
 
-type AiSuggestion = {
-  original: string;
-  replacement: string;
+type HyperlinkSelection = {
+  path: string;
+  start: number;
+  end: number;
+  text: string;
+  rect: DOMRect;
+};
+
+type SelectedFieldMetrics = {
+  availableWidthPx: number;
+  fontSizePx: number;
+  fontFamily: string;
+  charWidthPx: number;
+  safetyBuffer: number;
 };
 
 type SelectedField = {
   path: string;
   text: string;
+  metrics?: SelectedFieldMetrics;
 };
 
 type BulkOperation = {
@@ -469,6 +509,8 @@ type SelectionRewriteResponse = {
   error?: string;
 };
 
+const MAX_LINES_OPTIONS = [1, 2, 3, 4, 5, 6] as const;
+
 const SECTION_LABELS: Record<SectionKey, string> = {
   summary: "Summary",
   experience: "Experience",
@@ -476,6 +518,29 @@ const SECTION_LABELS: Record<SectionKey, string> = {
   education: "Education",
   skills: "Skills",
 };
+
+const getRawTextValueAtPath = (data: ResumeData, path: string): string => {
+  const segments = parseFieldPath(path);
+  let cursor: any = data;
+  for (const segment of segments) {
+    if (cursor == null) return "";
+    cursor = cursor[segment as keyof typeof cursor];
+  }
+  if (typeof cursor === "string") return cursor;
+  if (
+    Array.isArray(cursor) &&
+    path.endsWith(".technologies") &&
+    cursor.every((item) => typeof item === "string")
+  ) {
+    return cursor.join(", ");
+  }
+  return "";
+};
+
+const isMultilineFieldPath = (path: string) => path === "metadata.summary";
+
+const getRenderedTextValueAtPath = (data: ResumeData, path: string): string =>
+  normalizeText(getRawTextValueAtPath(data, path), isMultilineFieldPath(path));
 
 interface QualityIndicatorProps {
   feedback?: FieldFeedback;
@@ -690,6 +755,8 @@ export function ResumeViewer({
     education,
     skills,
   } = resumeData;
+  const [isPrintPreviewMode, setIsPrintPreviewMode] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
 
   const feedbackMap = useMemo(() => {
     if (!analysis?.fieldFeedback) {
@@ -721,6 +788,7 @@ export function ResumeViewer({
         wrapperElement?: "span" | "div";
       }
     ) => {
+      if (isPrintPreviewMode) return node;
       const match = pickFeedback(paths);
       if (!match) return node;
       const Wrapper = options?.wrapperElement ?? "span";
@@ -741,13 +809,16 @@ export function ResumeViewer({
         </Wrapper>
       );
     },
-    [onApplySuggestion, pickFeedback]
+    [isPrintPreviewMode, onApplySuggestion, pickFeedback]
   );
 
   const resolvedLayoutPreferences = useMemo(
     () => ({
       ...DEFAULT_LAYOUT_PREFERENCES,
       ...layoutPreferences,
+      hyperlinkUnderline:
+        layoutPreferences?.hyperlinkUnderline ??
+        DEFAULT_LAYOUT_PREFERENCES.hyperlinkUnderline,
       contactOrder:
         layoutPreferences?.contactOrder ?? DEFAULT_LAYOUT_PREFERENCES.contactOrder,
       headerAlignment: {
@@ -774,9 +845,29 @@ export function ResumeViewer({
     [layoutPreferences]
   );
 
-  const paperStyle = useMemo(() => {
-    const { width, height } = PAPER_DIMENSIONS[pageSettings.paperSize];
-    const { margins } = pageSettings;
+  const resolvedPageSettings = useMemo(() => {
+    const legacyMargins =
+      pageSettings?.margins ?? DEFAULT_PAGE_SETTINGS.resumeMargins;
+    const legacyPreset =
+      pageSettings?.marginPreset ?? DEFAULT_PAGE_SETTINGS.resumeMarginPreset;
+
+    return {
+      paperSize: pageSettings?.paperSize ?? DEFAULT_PAGE_SETTINGS.paperSize,
+      resumeMargins: pageSettings?.resumeMargins ?? legacyMargins,
+      resumeMarginPreset: pageSettings?.resumeMarginPreset ?? legacyPreset,
+      coverLetterMargins: pageSettings?.coverLetterMargins ?? legacyMargins,
+      coverLetterMarginPreset:
+        pageSettings?.coverLetterMarginPreset ?? legacyPreset,
+    };
+  }, [pageSettings]);
+
+  const getPaperStyleFromMargins = useCallback((margins: {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+  }) => {
+    const { width, height } = PAPER_DIMENSIONS[resolvedPageSettings.paperSize];
 
     // Calculate margin percentages relative to paper width for responsive scaling
     const marginTopPercent = (margins.top / height) * 100;
@@ -788,13 +879,64 @@ export function ResumeViewer({
       aspectRatio: `${width} / ${height}`,
       padding: `${marginTopPercent}% ${marginRightPercent}% ${marginBottomPercent}% ${marginLeftPercent}%`,
     };
-  }, [pageSettings]);
+  }, [resolvedPageSettings.paperSize]);
+
+  const resumePaperStyle = useMemo(
+    () => getPaperStyleFromMargins(resolvedPageSettings.resumeMargins),
+    [getPaperStyleFromMargins, resolvedPageSettings.resumeMargins]
+  );
+
+  const coverLetterPaperStyle = useMemo(
+    () => getPaperStyleFromMargins(resolvedPageSettings.coverLetterMargins),
+    [getPaperStyleFromMargins, resolvedPageSettings.coverLetterMargins]
+  );
 
   const paperMaxWidth = useMemo(() => {
-    const { width } = PAPER_DIMENSIONS[pageSettings.paperSize];
+    const { width } = PAPER_DIMENSIONS[resolvedPageSettings.paperSize];
     const pxPerMm = 72 / 25.4;
     return `${width * pxPerMm}px`;
-  }, [pageSettings.paperSize]);
+  }, [resolvedPageSettings.paperSize]);
+
+  const hyperlinksByPath = useMemo(() => {
+    const grouped = new Map<string, TextHyperlink[]>();
+    const rawHyperlinks = Array.isArray(resumeData.hyperlinks)
+      ? resumeData.hyperlinks
+      : [];
+
+    for (const hyperlink of rawHyperlinks) {
+      const safeUrl = normalizeHyperlinkUrl(hyperlink.url);
+      if (!safeUrl) continue;
+
+      const text = getRenderedTextValueAtPath(resumeData, hyperlink.path);
+      if (!text) continue;
+      if (!isHyperlinkRangeValid(text, hyperlink)) continue;
+
+      const normalizedHyperlink: TextHyperlink = {
+        ...hyperlink,
+        url: safeUrl,
+      };
+      const current = grouped.get(hyperlink.path) ?? [];
+      current.push(normalizedHyperlink);
+      grouped.set(hyperlink.path, current);
+    }
+
+    for (const [path, links] of grouped.entries()) {
+      const sorted = [...links].sort((a, b) => {
+        if (a.start !== b.start) return a.start - b.start;
+        return a.end - b.end;
+      });
+      const filtered: TextHyperlink[] = [];
+      let cursor = -1;
+      for (const link of sorted) {
+        if (link.start < cursor) continue;
+        filtered.push(link);
+        cursor = link.end;
+      }
+      grouped.set(path, filtered);
+    }
+
+    return grouped;
+  }, [resumeData]);
 
   const { groupedSkills, ungroupedSkills } = useMemo(() => {
     const grouped: Record<string, SkillEntry[]> = {};
@@ -819,21 +961,22 @@ export function ResumeViewer({
 
   const [todayFormatted, setTodayFormatted] = useState("");
   const [activeAiTarget, setActiveAiTarget] = useState<string | null>(null);
-  const [aiSuggestions, setAiSuggestions] = useState<Record<string, AiSuggestion>>(
-    {}
-  );
-  const [aiLoading, setAiLoading] = useState<Record<string, boolean>>({});
-  const [aiErrors, setAiErrors] = useState<Record<string, string>>({});
   const [selectionState, setSelectionState] = useState<{
     fields: SelectedField[];
     rect: DOMRect;
   } | null>(null);
+  const [hyperlinkSelection, setHyperlinkSelection] =
+    useState<HyperlinkSelection | null>(null);
+  const [isHyperlinkPanelOpen, setIsHyperlinkPanelOpen] = useState(false);
+  const [hyperlinkDraft, setHyperlinkDraft] = useState("");
+  const [hyperlinkError, setHyperlinkError] = useState<string | null>(null);
   const [bulkFields, setBulkFields] = useState<SelectedField[]>([]);
   const [bulkOps, setBulkOps] = useState<BulkOperation[]>([]);
   const [bulkPrompt, setBulkPrompt] = useState("");
   const [bulkTargetLabel, setBulkTargetLabel] = useState("");
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkMaxLines, setBulkMaxLines] = useState(0);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [isBulkCollapsed, setIsBulkCollapsed] = useState(false);
   const [bulkScope, setBulkScope] = useState<{
@@ -846,6 +989,8 @@ export function ResumeViewer({
     [analysis]
   );
   const resumeContentRef = useRef<HTMLDivElement>(null);
+  const resumePaginationRecalculateRef = useRef<(() => void) | null>(null);
+  const charMeasureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const bulkPanelTop = isDebugOpen ? 120 : 60;
 
   useEffect(() => {
@@ -858,119 +1003,386 @@ export function ResumeViewer({
     );
   }, []);
 
-  const toggleAiTarget = (key: string) => {
-    setActiveAiTarget((current) => (current === key ? null : key));
-  };
+  useEffect(() => {
+    if (!isPrintPreviewMode) return;
+    setIsBulkOpen(false);
+    setIsDebugOpen(false);
+    setSelectionState(null);
+    setHyperlinkSelection(null);
+    setIsHyperlinkPanelOpen(false);
+    setHyperlinkDraft("");
+    setHyperlinkError(null);
+    setActiveAiTarget(null);
+  }, [isPrintPreviewMode]);
 
-  const updateAiLoading = (key: string, value: boolean) => {
-    setAiLoading((current) => {
-      const next = { ...current };
-      if (value) {
-        next[key] = true;
-      } else {
-        delete next[key];
-      }
-      return next;
-    });
-  };
-
-  const updateAiError = (key: string, message: string | null) => {
-    setAiErrors((current) => {
-      const next = { ...current };
-      if (message) {
-        next[key] = message;
-      } else {
-        delete next[key];
-      }
-      return next;
-    });
-  };
-
-  const clearAiSuggestion = (key: string) => {
-    setAiSuggestions((current) => {
-      const next = { ...current };
-      delete next[key];
-      return next;
-    });
-    updateAiError(key, null);
-  };
-
-  const requestAiReplacement = async (
-    key: string,
-    text: string,
-    instruction: string,
-    context: Record<string, unknown>
-  ) => {
-    if (aiLoading[key]) return;
-    if (!text.trim()) {
-      updateAiError(key, "Add text before asking AI to rewrite.");
-      return;
-    }
-
-    updateAiError(key, null);
-    updateAiLoading(key, true);
+  const exportResumeAsPdf = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    const wasInPrintPreview = isPrintPreviewMode;
+    setIsExportingPdf(true);
 
     try {
-      const response = await fetch("/api/inline-rewrite", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          text,
-          instruction,
-          context,
-        }),
-      });
+      const waitForResumeLayoutToSettle = async (target: HTMLElement) => {
+        await new Promise<void>((resolve) => {
+          let finished = false;
+          let quietTimer: number | null = null;
+          let hardTimer: number | null = null;
+          const observer = new MutationObserver(() => {
+            if (quietTimer !== null) {
+              window.clearTimeout(quietTimer);
+            }
+            quietTimer = window.setTimeout(finish, 220);
+          });
 
-      const rawText = await response.text();
-      let payload: InlineRewriteResponse | null = null;
-      try {
-        payload = rawText ? (JSON.parse(rawText) as InlineRewriteResponse) : null;
-      } catch {
-        payload = null;
+          const cleanup = () => {
+            observer.disconnect();
+            if (quietTimer !== null) {
+              window.clearTimeout(quietTimer);
+            }
+            if (hardTimer !== null) {
+              window.clearTimeout(hardTimer);
+            }
+          };
+
+          function finish() {
+            if (finished) return;
+            finished = true;
+            cleanup();
+            resolve();
+          }
+
+          observer.observe(target, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            characterData: true,
+          });
+
+          quietTimer = window.setTimeout(finish, 220);
+          hardTimer = window.setTimeout(finish, 1800);
+        });
+
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => resolve());
+          });
+        });
+      };
+
+      if (!wasInPrintPreview) {
+        setIsPrintPreviewMode(true);
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => resolve());
+          });
+        });
       }
 
-      if (!response.ok) {
-        throw new Error(payload?.error || "Failed to rewrite text.");
-      }
+      const container = resumeContentRef.current;
+      if (!container) return;
+      resumePaginationRecalculateRef.current?.();
+      await waitForResumeLayoutToSettle(container);
+      resumePaginationRecalculateRef.current?.();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 120));
 
-      const replacement = payload?.replacement?.trim();
-      if (!replacement) {
-        throw new Error("AI returned an empty replacement.");
-      }
-
-      setAiSuggestions((current) => ({
-        ...current,
-        [key]: {
-          original: text,
-          replacement,
-        },
-      }));
-      setActiveAiTarget(null);
-    } catch (error) {
-      updateAiError(
-        key,
-        error instanceof Error ? error.message : "Failed to rewrite text."
+      const pages = Array.from(
+        container.querySelectorAll<HTMLElement>(".document-paper")
       );
-    } finally {
-      updateAiLoading(key, false);
-    }
-  };
+      if (pages.length === 0) return;
 
-  const acceptAiSuggestion = (
-    key: string,
-    apply: (value: string) => void
-  ) => {
-    const suggestion = aiSuggestions[key];
-    if (!suggestion) return;
-    apply(suggestion.replacement);
-    clearAiSuggestion(key);
-  };
+      const printWindow = window.open("", "_blank");
+      if (!printWindow) return;
+
+      const { width, height } = PAPER_DIMENSIONS[resolvedPageSettings.paperSize];
+      const styleTags = Array.from(
+        document.querySelectorAll('style, link[rel="stylesheet"]')
+      )
+        .map((node) => node.outerHTML)
+        .join("\n");
+
+      const previewPxPerMm = 72 / 25.4;
+      const printPxPerMm = 96 / 25.4;
+      const printScale = printPxPerMm / previewPxPerMm;
+      const previewPaperWidthPx = width * previewPxPerMm;
+      const previewPaperHeightPx = height * previewPxPerMm;
+
+      const pageHtml = pages
+        .map(
+          (page, index) => `
+            <section class="export-page${index === pages.length - 1 ? "" : " page-break"}">
+              <div class="export-page-inner">
+                ${page.outerHTML}
+              </div>
+            </section>
+          `
+        )
+        .join("");
+
+      const baseName =
+        metadata.fullName
+          ?.trim()
+          .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
+          .replace(/\s+/g, "-")
+          .toLowerCase() || "resume";
+
+      printWindow.document.open();
+      printWindow.document.write(`
+        <!doctype html>
+        <html class="${document.documentElement.className}">
+          <head>
+            <meta charset="utf-8" />
+            <title>${baseName}.pdf</title>
+            ${styleTags}
+            <style>
+              @page {
+                size: ${width}mm ${height}mm;
+                margin: 0;
+              }
+
+              html,
+              body {
+                margin: 0;
+                padding: 0;
+                background: #fff !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+
+              .pdf-export-root {
+                margin: 0 auto;
+                width: ${width}mm;
+              }
+
+              .export-page {
+                width: ${width}mm;
+                height: ${height}mm;
+                overflow: hidden;
+              }
+
+              .export-page-inner {
+                width: ${previewPaperWidthPx}px;
+                height: ${previewPaperHeightPx}px;
+                transform: scale(${printScale});
+                transform-origin: top left;
+              }
+
+              .export-page .document-paper {
+                width: ${previewPaperWidthPx}px !important;
+                min-height: ${previewPaperHeightPx}px !important;
+                height: ${previewPaperHeightPx}px !important;
+                margin: 0 !important;
+                box-shadow: none !important;
+                border: none !important;
+                border-radius: 0 !important;
+                overflow: hidden !important;
+              }
+
+              .print-preview-mode .editable-field:empty::before,
+              .export-page .editable-field:empty::before,
+              .export-page .editable-field[data-placeholder]::before {
+                content: "" !important;
+              }
+
+              .export-page.page-break {
+                break-after: page;
+                page-break-after: always;
+              }
+            </style>
+          </head>
+          <body class="print-preview-mode">
+            <main class="pdf-export-root">
+              ${pageHtml}
+            </main>
+            <script>
+              (() => {
+                const startPrint = () => {
+                  window.setTimeout(() => {
+                    window.focus();
+                    window.print();
+                  }, 150);
+                };
+
+                if (document.readyState === "complete") {
+                  startPrint();
+                } else {
+                  window.addEventListener("load", startPrint, { once: true });
+                }
+
+                window.addEventListener("afterprint", () => {
+                  window.close();
+                });
+              })();
+            </script>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+    } finally {
+      if (!wasInPrintPreview) {
+        setIsPrintPreviewMode(false);
+      }
+      setIsExportingPdf(false);
+    }
+  }, [
+    isPrintPreviewMode,
+    metadata.fullName,
+    resolvedPageSettings.paperSize,
+  ]);
 
   const clearSelectionState = () => {
     setSelectionState(null);
+    setHyperlinkSelection(null);
+    setIsHyperlinkPanelOpen(false);
+    setHyperlinkDraft("");
+    setHyperlinkError(null);
   };
+
+  const openBulkPanel = useCallback((options: {
+    fields: SelectedField[];
+    targetLabel: string;
+    scope: { type: "selection" | "section"; section?: SectionKey };
+    activeTargetKey?: string | null;
+    prompt?: string;
+    maxLines?: number;
+  }) => {
+    setBulkFields(options.fields);
+    setBulkTargetLabel(options.targetLabel);
+    setBulkPrompt(options.prompt ?? "");
+    setBulkMaxLines(options.maxLines ?? 0);
+    setBulkOps([]);
+    setBulkError(null);
+    setBulkScope(options.scope);
+    setIsBulkCollapsed(false);
+    setIsBulkOpen(true);
+    setIsHyperlinkPanelOpen(false);
+    setHyperlinkError(null);
+    setActiveAiTarget(options.activeTargetKey ?? null);
+  }, []);
+
+  const getFallbackContentWidthPx = useCallback(() => {
+    const paper = PAPER_DIMENSIONS[resolvedPageSettings.paperSize];
+    const contentWidthMm =
+      paper.width -
+      resolvedPageSettings.resumeMargins.left -
+      resolvedPageSettings.resumeMargins.right;
+    const pxPerMm = 72 / 25.4;
+    return contentWidthMm * pxPerMm;
+  }, [
+    resolvedPageSettings.paperSize,
+    resolvedPageSettings.resumeMargins.left,
+    resolvedPageSettings.resumeMargins.right,
+  ]);
+
+  const parsePxValue = (rawValue: string): number => {
+    if (!rawValue || rawValue === "normal") return 0;
+    const parsed = Number.parseFloat(rawValue);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const measureCharWidth = useCallback(
+    (options: {
+      element: HTMLElement;
+      text: string;
+      fontShorthand: string;
+      fontFamily: string;
+      fontSizePx: number;
+      lineHeightPx: number;
+      letterSpacingPx: number;
+    }) => {
+      const {
+        element,
+        text,
+        fontShorthand,
+        fontFamily,
+        fontSizePx,
+        lineHeightPx,
+        letterSpacingPx,
+      } = options;
+      if (typeof document === "undefined") return 8;
+      if (!charMeasureCanvasRef.current) {
+        charMeasureCanvasRef.current = document.createElement("canvas");
+      }
+      const context = charMeasureCanvasRef.current.getContext("2d");
+      if (!context) return 8;
+      context.font = fontShorthand;
+      const sample =
+        "the quick brown fox jumps over the lazy dog and ships stable features ";
+      const measuredSampleWidth = context.measureText(sample).width / sample.length;
+
+      const normalizedFamily = fontFamily.toLowerCase();
+      const heuristicRatio = normalizedFamily.includes("mono")
+        ? 0.58
+        : normalizedFamily.includes("georgia") ||
+            normalizedFamily.includes("times") ||
+            normalizedFamily.includes("serif")
+          ? 0.5
+          : 0.46;
+      const heuristicWidth = fontSizePx * heuristicRatio;
+
+      const normalizedText = text.replace(/\s+/g, " ").trim();
+      const elementRect = element.getBoundingClientRect();
+      const appearsSingleLine = elementRect.height <= lineHeightPx * 1.35;
+      const observedWidth =
+        appearsSingleLine && normalizedText.length >= 12
+          ? (elementRect.width / normalizedText.length) * 1.1
+          : Number.POSITIVE_INFINITY;
+
+      const candidateWidths = [measuredSampleWidth, heuristicWidth, observedWidth]
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const baseWidth =
+        candidateWidths.length > 0
+          ? Math.min(...candidateWidths)
+          : measuredSampleWidth || heuristicWidth || 8;
+      return Math.max(2, baseWidth + letterSpacingPx);
+    },
+    []
+  );
+
+  const resolveAvailableWidthPx = useCallback(
+    (element: HTMLElement, fallbackWidthPx: number) => {
+      const selfWidth = element.getBoundingClientRect().width;
+      const parentWidth = element.parentElement?.getBoundingClientRect().width ?? 0;
+      const grandParentWidth =
+        element.parentElement?.parentElement?.getBoundingClientRect().width ?? 0;
+      const candidate = Math.max(selfWidth, parentWidth, grandParentWidth);
+      const width = candidate > 0 ? candidate : fallbackWidthPx;
+      return Math.max(80, Math.min(width, fallbackWidthPx));
+    },
+    []
+  );
+
+  const findFieldElement = useCallback((node: Node | null): HTMLElement | null => {
+    if (!node) return null;
+    const element =
+      node.nodeType === Node.ELEMENT_NODE
+        ? (node as Element)
+        : node.parentElement;
+    return element?.closest<HTMLElement>("[data-field-path]") ?? null;
+  }, []);
+
+  const getSelectionRangeInField = useCallback((
+    range: Range,
+    fieldElement: HTMLElement
+  ): { start: number; end: number; text: string } | null => {
+    const fieldText = normalizeText(fieldElement.textContent ?? "", true);
+    if (!fieldText) return null;
+
+    const preRange = range.cloneRange();
+    preRange.selectNodeContents(fieldElement);
+    preRange.setEnd(range.startContainer, range.startOffset);
+    const start = normalizeText(preRange.toString(), true).length;
+    const selectedText = normalizeText(range.toString(), true);
+    const end = start + selectedText.length;
+
+    if (selectedText.trim().length === 0) return null;
+    if (start < 0 || end <= start) return null;
+    if (end > fieldText.length) return null;
+
+    return {
+      start,
+      end,
+      text: fieldText.slice(start, end),
+    };
+  }, []);
 
   const collectSelectedFields = useCallback(() => {
     const selection = window.getSelection();
@@ -998,13 +1410,44 @@ export function ResumeViewer({
     );
     const fields: SelectedField[] = [];
     const seen = new Set<string>();
+    const fallbackWidthPx = getFallbackContentWidthPx();
 
     for (const element of elements) {
       if (!range.intersectsNode(element)) continue;
       const path = element.dataset.fieldPath;
       if (!path || seen.has(path)) continue;
       const text = (element.textContent ?? "").trim();
-      fields.push({ path, text });
+      const computed = window.getComputedStyle(element);
+      const fontSizePx = parsePxValue(computed.fontSize);
+      const fontFamily = computed.fontFamily || FONT_FAMILY_MAP.serif;
+      const fontShorthand =
+        computed.font && computed.font !== ""
+          ? computed.font
+          : `${computed.fontWeight} ${computed.fontSize} ${fontFamily}`;
+      const lineHeightPx = parsePxValue(computed.lineHeight) || Math.max(8, fontSizePx) * 1.25;
+      const letterSpacingPx = parsePxValue(computed.letterSpacing);
+      const availableWidthPx = resolveAvailableWidthPx(element, fallbackWidthPx);
+      const safetyBuffer = getFontSafetyBuffer(fontFamily);
+      const charWidthPx = measureCharWidth({
+        element,
+        text,
+        fontShorthand,
+        fontFamily,
+        fontSizePx: Math.max(8, fontSizePx),
+        lineHeightPx,
+        letterSpacingPx,
+      });
+      fields.push({
+        path,
+        text,
+        metrics: {
+          availableWidthPx,
+          fontSizePx: Math.max(8, fontSizePx),
+          fontFamily,
+          charWidthPx,
+          safetyBuffer,
+        },
+      });
       seen.add(path);
     }
 
@@ -1017,7 +1460,55 @@ export function ResumeViewer({
 
     const rect = range.getBoundingClientRect();
     setSelectionState({ fields, rect });
-  }, [isBulkOpen]);
+
+    const startFieldElement = findFieldElement(range.startContainer);
+    const endFieldElement = findFieldElement(range.endContainer);
+    if (
+      !startFieldElement ||
+      !endFieldElement ||
+      startFieldElement !== endFieldElement
+    ) {
+      setHyperlinkSelection(null);
+      setIsHyperlinkPanelOpen(false);
+      setHyperlinkDraft("");
+      setHyperlinkError(null);
+      return;
+    }
+
+    const path = startFieldElement.dataset.fieldPath;
+    if (!path) {
+      setHyperlinkSelection(null);
+      setIsHyperlinkPanelOpen(false);
+      setHyperlinkDraft("");
+      setHyperlinkError(null);
+      return;
+    }
+
+    const rangeInfo = getSelectionRangeInField(range, startFieldElement);
+    if (!rangeInfo) {
+      setHyperlinkSelection(null);
+      setIsHyperlinkPanelOpen(false);
+      setHyperlinkDraft("");
+      setHyperlinkError(null);
+      return;
+    }
+
+    setHyperlinkSelection({
+      path,
+      start: rangeInfo.start,
+      end: rangeInfo.end,
+      text: rangeInfo.text,
+      rect,
+    });
+    setHyperlinkError(null);
+  }, [
+    findFieldElement,
+    getFallbackContentWidthPx,
+    getSelectionRangeInField,
+    isBulkOpen,
+    measureCharWidth,
+    resolveAvailableWidthPx,
+  ]);
 
   const clamp = (value: number, min: number, max: number) =>
     Math.min(Math.max(value, min), max);
@@ -1027,12 +1518,102 @@ export function ResumeViewer({
     if (typeof window === "undefined") return null;
     const rect = selectionState.rect;
     const padding = 8;
-    const width = 32;
+    const width = hyperlinkSelection ? 72 : 32;
     const height = 32;
     const left = clamp(rect.right + padding, 8, window.innerWidth - width - 8);
     const top = clamp(rect.top - height - padding, 8, window.innerHeight - height - 8);
     return { left, top };
-  }, [selectionState]);
+  }, [hyperlinkSelection, selectionState]);
+
+  const selectedHyperlink = useMemo(() => {
+    if (!hyperlinkSelection) return null;
+    const pathLinks = hyperlinksByPath.get(hyperlinkSelection.path) ?? [];
+    return (
+      pathLinks.find(
+        (link) =>
+          link.start === hyperlinkSelection.start &&
+          link.end === hyperlinkSelection.end
+      ) ?? null
+    );
+  }, [hyperlinkSelection, hyperlinksByPath]);
+
+  const openHyperlinkPanel = useCallback(() => {
+    if (!hyperlinkSelection) return;
+    setHyperlinkDraft(selectedHyperlink?.url ?? "");
+    setHyperlinkError(null);
+    setIsHyperlinkPanelOpen(true);
+  }, [hyperlinkSelection, selectedHyperlink?.url]);
+
+  useEffect(() => {
+    if (!isHyperlinkPanelOpen || !hyperlinkSelection) return;
+    setHyperlinkDraft(selectedHyperlink?.url ?? "");
+    setHyperlinkError(null);
+  }, [hyperlinkSelection, isHyperlinkPanelOpen, selectedHyperlink?.url]);
+
+  const applyHyperlinkToSelection = useCallback(() => {
+    if (!hyperlinkSelection) return;
+    const normalizedUrl = normalizeHyperlinkUrl(hyperlinkDraft);
+    if (!normalizedUrl) {
+      setHyperlinkError(
+        "Enter a valid URL (https://..., mailto:..., tel:..., or domain)."
+      );
+      return;
+    }
+
+    const value = getRenderedTextValueAtPath(resumeData, hyperlinkSelection.path);
+    const selectedText = value.slice(
+      hyperlinkSelection.start,
+      hyperlinkSelection.end
+    );
+    if (!selectedText || selectedText !== hyperlinkSelection.text) {
+      setHyperlinkError("Selection changed. Highlight the text again.");
+      return;
+    }
+
+    const overlapsSelection = (link: TextHyperlink) =>
+      link.path === hyperlinkSelection.path &&
+      link.start < hyperlinkSelection.end &&
+      link.end > hyperlinkSelection.start;
+
+    const nextHyperlinks = (resumeData.hyperlinks ?? []).filter(
+      (link) => !overlapsSelection(link)
+    );
+    nextHyperlinks.push({
+      id: crypto.randomUUID(),
+      path: hyperlinkSelection.path,
+      start: hyperlinkSelection.start,
+      end: hyperlinkSelection.end,
+      text: selectedText,
+      url: normalizedUrl,
+    });
+
+    onResumeUpdate({
+      ...resumeData,
+      hyperlinks: nextHyperlinks,
+    });
+    setIsHyperlinkPanelOpen(false);
+    setHyperlinkDraft("");
+    setHyperlinkError(null);
+  }, [hyperlinkDraft, hyperlinkSelection, onResumeUpdate, resumeData]);
+
+  const removeHyperlinkFromSelection = useCallback(() => {
+    if (!hyperlinkSelection) return;
+    const nextHyperlinks = (resumeData.hyperlinks ?? []).filter(
+      (link) =>
+        !(
+          link.path === hyperlinkSelection.path &&
+          link.start === hyperlinkSelection.start &&
+          link.end === hyperlinkSelection.end
+        )
+    );
+    onResumeUpdate({
+      ...resumeData,
+      hyperlinks: nextHyperlinks,
+    });
+    setIsHyperlinkPanelOpen(false);
+    setHyperlinkDraft("");
+    setHyperlinkError(null);
+  }, [hyperlinkSelection, onResumeUpdate, resumeData]);
 
   const buildSectionFields = useCallback((section: SectionKey): SelectedField[] => {
     if (section === "summary") {
@@ -1059,7 +1640,6 @@ export function ResumeViewer({
     if (section === "projects") {
       return projects.flatMap((project, index) => [
         { path: `projects[${index}].name`, text: project.name },
-        { path: `projects[${index}].description`, text: project.description },
         {
           path: `projects[${index}].technologies`,
           text: project.technologies.join(", "),
@@ -1168,8 +1748,10 @@ export function ResumeViewer({
           "text",
           "bullet",
           "technology",
+          "none",
         ];
         if (!replaceTypes.includes(operation.itemType)) return [];
+        if (!operation.value?.trim()) return [];
         return [{ ...operation, id: crypto.randomUUID() }];
       }
       if (operation.op === "delete") {
@@ -1185,12 +1767,52 @@ export function ResumeViewer({
     });
   }, [buildAllowedTargets]);
 
+  const buildFieldLengthConstraints = useCallback(
+    (fields: SelectedField[], maxLines: number) => {
+      if (maxLines < 1) {
+        return new Map<string, FieldLengthConstraint>();
+      }
+      const constraints = new Map<string, FieldLengthConstraint>();
+      for (const field of fields) {
+        if (!field.metrics) continue;
+        const maxCharsPerLine = Math.max(
+          8,
+          Math.floor(
+            (field.metrics.availableWidthPx * field.metrics.safetyBuffer) /
+              field.metrics.charWidthPx
+          )
+        );
+        constraints.set(field.path, {
+          maxLines,
+          maxCharsPerLine,
+          maxCharsTotal: maxCharsPerLine * maxLines,
+          availableWidthPx: field.metrics.availableWidthPx,
+          fontSizePx: field.metrics.fontSizePx,
+          fontFamily: field.metrics.fontFamily,
+          safetyBuffer: field.metrics.safetyBuffer,
+        });
+      }
+      return constraints;
+    },
+    []
+  );
+
+  const buildConstraintInstruction = (
+    instruction: string,
+    constraint?: FieldLengthConstraint
+  ) => {
+    if (!constraint) return instruction;
+    return `${instruction}\n\nLength limit: max ${constraint.maxLines} lines, max ${constraint.maxCharsPerLine} chars per line, and max ${constraint.maxCharsTotal} chars total.`;
+  };
+
   const requestBulkRewrite = useCallback(async (
     instruction: string,
     fields: SelectedField[],
-    scope: { type: "selection" | "section"; section?: string }
+    scope: { type: "selection" | "section"; section?: string },
+    maxLines: number
   ) => {
-    if (!instruction.trim()) return;
+    const trimmedInstruction = instruction.trim();
+    if (!trimmedInstruction) return;
     if (scope.type === "selection" && fields.length === 0) {
       setBulkError("Select some resume text first.");
       return;
@@ -1200,14 +1822,30 @@ export function ResumeViewer({
     setBulkOps([]);
 
     try {
+      const lineConstraintMap =
+        scope.type === "selection"
+          ? buildFieldLengthConstraints(fields, maxLines)
+          : new Map<string, FieldLengthConstraint>();
+      const fieldsPayload = fields.map((field) => ({
+        path: field.path,
+        text: field.text,
+        lengthConstraint: lineConstraintMap.get(field.path),
+      }));
+      const lengthInstruction =
+        lineConstraintMap.size > 0
+          ? `Shorten each constrained replacement to fit the provided max line/character limits exactly.`
+          : "";
+
       const response = await fetch("/api/selection-rewrite", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          instruction,
-          fields,
+          instruction: [trimmedInstruction, lengthInstruction]
+            .filter(Boolean)
+            .join("\n\n"),
+          fields: fieldsPayload,
           scope,
         }),
       });
@@ -1228,6 +1866,78 @@ export function ResumeViewer({
       const operations = payload?.operations ?? [];
       const normalized = normalizeBulkOps(operations, scope, fields);
       if (normalized.length === 0) {
+        if (scope.type === "selection" && fields.length === 1) {
+          const selectedField = fields[0];
+          const selectedConstraint = lineConstraintMap.get(selectedField.path);
+          const inlineResponse = await fetch("/api/inline-rewrite", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              text: selectedField.text,
+              instruction: buildConstraintInstruction(
+                trimmedInstruction,
+                selectedConstraint
+              ),
+              lengthConstraint: selectedConstraint,
+              context: {
+                source: "selection-fallback",
+                path: selectedField.path,
+                lengthConstraint: selectedConstraint,
+              },
+            }),
+          });
+
+          const inlineRawText = await inlineResponse.text();
+          let inlinePayload: InlineRewriteResponse | null = null;
+          try {
+            inlinePayload = inlineRawText
+              ? (JSON.parse(inlineRawText) as InlineRewriteResponse)
+              : null;
+          } catch {
+            inlinePayload = null;
+          }
+
+          if (!inlineResponse.ok) {
+            throw new Error(
+              inlinePayload?.error || "Failed to rewrite selection."
+            );
+          }
+
+          const replacement = inlinePayload?.replacement?.trim();
+          if (!replacement) {
+            throw new Error("AI returned an empty replacement.");
+          }
+
+          if (selectedConstraint) {
+            const wrappedLineCount = estimateWrappedLineCount(
+              replacement,
+              selectedConstraint.maxCharsPerLine
+            );
+            if (
+              replacement.length > selectedConstraint.maxCharsTotal ||
+              wrappedLineCount > selectedConstraint.maxLines
+            ) {
+              throw new Error(
+                "AI exceeded the selected max-lines limit. Try regenerating or increase the line limit."
+              );
+            }
+          }
+
+          setBulkOps([
+            {
+              id: crypto.randomUUID(),
+              op: "replace",
+              path: selectedField.path,
+              value: replacement,
+              index: -1,
+              itemType: "text",
+            },
+          ]);
+          setIsBulkOpen(true);
+          return;
+        }
         throw new Error("No valid edits were returned for this selection.");
       }
       setBulkOps(normalized);
@@ -1239,31 +1949,31 @@ export function ResumeViewer({
     } finally {
       setBulkLoading(false);
     }
-  }, [normalizeBulkOps]);
+  }, [buildFieldLengthConstraints, normalizeBulkOps]);
 
-  useEffect(() => {
-    const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        section: SectionKey;
-        instruction: string;
-      }>).detail;
-      if (!detail) return;
-      const fields = buildSectionFields(detail.section);
-      setBulkFields(fields);
-      setBulkTargetLabel(`Section: ${SECTION_LABELS[detail.section]}`);
-      setBulkPrompt(detail.instruction);
-      setBulkScope({ type: "section", section: detail.section });
-      setIsBulkOpen(true);
-      requestBulkRewrite(detail.instruction, fields, {
-        type: "section",
-        section: detail.section,
-      });
-    };
+  const openSingleFieldAiPanel = useCallback((options: {
+    targetKey: string;
+    targetLabel: string;
+    path: string;
+    text: string;
+  }) => {
+    openBulkPanel({
+      fields: [{ path: options.path, text: options.text }],
+      targetLabel: options.targetLabel,
+      scope: { type: "selection" },
+      activeTargetKey: options.targetKey,
+    });
+  }, [openBulkPanel]);
 
-    window.addEventListener("resume-section-ai", handler as EventListener);
-    return () =>
-      window.removeEventListener("resume-section-ai", handler as EventListener);
-  }, [buildSectionFields, requestBulkRewrite]);
+  const openSectionAiPanel = useCallback((section: SectionKey, targetKey: string) => {
+    const fields = buildSectionFields(section);
+    openBulkPanel({
+      fields,
+      targetLabel: `Section: ${SECTION_LABELS[section]}`,
+      scope: { type: "section", section },
+      activeTargetKey: targetKey,
+    });
+  }, [buildSectionFields, openBulkPanel]);
 
   const getValueAtPath = (data: ResumeData, path: string) => {
     const segments = parseFieldPath(path);
@@ -1746,47 +2456,50 @@ export function ResumeViewer({
     label: string,
     value: TextAlignment,
     onChange: (nextValue: TextAlignment) => void
-  ) => (
-    <div className="pointer-events-none absolute right-0 top-0 z-10 flex items-center gap-1 rounded-md border border-border bg-background/90 px-1 py-0.5 text-[10px] text-muted-foreground shadow-sm opacity-0 backdrop-blur-sm transition group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 print:hidden">
-      <span className="px-1 text-[9px] uppercase tracking-wide text-muted-foreground/70">
-        {label}
-      </span>
-      <ToggleGroup
-        type="single"
-        value={value}
-        onValueChange={(nextValue) => {
-          if (!nextValue) return;
-          onChange(nextValue as TextAlignment);
-        }}
-        variant="outline"
-        size="sm"
-        className="justify-start"
-        aria-label={`${label} alignment`}
-      >
-        <ToggleGroupItem
-          value="left"
-          className="h-6 w-6 min-w-0 px-0"
-          aria-label="Align left"
+  ) => {
+    if (isPrintPreviewMode) return null;
+    return (
+      <div className="pointer-events-none absolute right-0 top-0 z-10 flex items-center gap-1 rounded-md border border-border bg-background/90 px-1 py-0.5 text-[10px] text-muted-foreground shadow-sm opacity-0 backdrop-blur-sm transition group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 print:hidden">
+        <span className="px-1 text-[9px] uppercase tracking-wide text-muted-foreground/70">
+          {label}
+        </span>
+        <ToggleGroup
+          type="single"
+          value={value}
+          onValueChange={(nextValue) => {
+            if (!nextValue) return;
+            onChange(nextValue as TextAlignment);
+          }}
+          variant="outline"
+          size="sm"
+          className="justify-start"
+          aria-label={`${label} alignment`}
         >
-          <AlignLeft className="h-3 w-3" />
-        </ToggleGroupItem>
-        <ToggleGroupItem
-          value="center"
-          className="h-6 w-6 min-w-0 px-0"
-          aria-label="Align center"
-        >
-          <AlignCenter className="h-3 w-3" />
-        </ToggleGroupItem>
-        <ToggleGroupItem
-          value="right"
-          className="h-6 w-6 min-w-0 px-0"
-          aria-label="Align right"
-        >
-          <AlignRight className="h-3 w-3" />
-        </ToggleGroupItem>
-      </ToggleGroup>
-    </div>
-  );
+          <ToggleGroupItem
+            value="left"
+            className="h-6 w-6 min-w-0 px-0"
+            aria-label="Align left"
+          >
+            <AlignLeft className="h-3 w-3" />
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="center"
+            className="h-6 w-6 min-w-0 px-0"
+            aria-label="Align center"
+          >
+            <AlignCenter className="h-3 w-3" />
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="right"
+            className="h-6 w-6 min-w-0 px-0"
+            aria-label="Align right"
+          >
+            <AlignRight className="h-3 w-3" />
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+    );
+  };
 
   const addExperienceEntry = () => {
     const newEntry: ResumeData["experience"][number] = {
@@ -1895,43 +2608,27 @@ export function ResumeViewer({
     addButton?: ReactNode
   ) => {
     const sectionAiKey = `section-ai-${section}`;
-    const isSectionAiOpen = activeAiTarget === sectionAiKey;
-    const isSectionAiLoading =
-      bulkLoading &&
-      bulkScope.type === "section" &&
-      bulkScope.section === section;
-    const sectionAiError =
-      bulkScope.type === "section" && bulkScope.section === section
-        ? bulkError
-        : null;
+    const isSectionAiOpen = isBulkOpen && activeAiTarget === sectionAiKey;
 
     return (
-      <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
+      <div className="flex items-center justify-between border-b border-gray-300 pb-0.5 text-gray-900 dark:text-gray-100 dark:border-gray-700">
         <div className="flex min-w-0 items-center gap-1">
           <h2
-            className="font-bold uppercase tracking-wide"
+            className="font-bold uppercase leading-none tracking-wide"
             style={resumeFontSizeStyles.sectionTitle}
           >
             {title}
           </h2>
-          <InlineAiAssist
-            isOpen={isSectionAiOpen}
-            onToggle={() => toggleAiTarget(sectionAiKey)}
-            onSubmit={(instruction) => {
-              window.dispatchEvent(
-                new CustomEvent("resume-section-ai", {
-                  detail: { section, instruction },
-                })
-              );
-              setActiveAiTarget(null);
-            }}
-            isLoading={isSectionAiLoading}
-            error={sectionAiError}
-            placeholder={`Ask AI to improve the ${title.toLowerCase()} section...`}
-            triggerClassName="h-5 w-5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
-          />
+          {!isPrintPreviewMode && (
+            <InlineAiAssist
+              isOpen={isSectionAiOpen}
+              onToggle={() => openSectionAiPanel(section, sectionAiKey)}
+              triggerClassName="h-5 w-5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+              ariaLabel={`Rewrite ${title} section with AI`}
+            />
+          )}
         </div>
-        {addButton}
+        {!isPrintPreviewMode ? addButton : null}
       </div>
     );
   };
@@ -1991,10 +2688,10 @@ export function ResumeViewer({
     const endDatePath = `experience[${entryIndex}].endDate`;
     const locationPath = `experience[${entryIndex}].location`;
     return (
-      <div className="group space-y-1">
-        <div className="flex items-start justify-between gap-2">
+      <div className="group space-y-0.5">
+        <div className="flex items-baseline justify-between gap-2">
           <span
-            className="min-w-0 flex-1 font-semibold text-gray-900 dark:text-gray-100"
+            className="min-w-0 flex-1 font-semibold leading-[1.1] text-gray-900 dark:text-gray-100"
             style={resumeFontSizeStyles.itemTitle}
           >
             {renderWithFeedback(
@@ -2011,18 +2708,31 @@ export function ResumeViewer({
               />
             )}
           </span>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-              onClick={() => removeExperienceEntry(entry.id)}
-              aria-label="Remove experience"
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
+          <div className="flex shrink-0 items-baseline gap-1">
+            {!isPrintPreviewMode && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-4 w-4 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-foreground"
+                onClick={() => addExperienceBullet(entry.id)}
+                aria-label="Add experience bullet"
+              >
+                <Plus className="h-3 w-3" />
+              </Button>
+            )}
+            {!isPrintPreviewMode && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-4 w-4 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+                onClick={() => removeExperienceEntry(entry.id)}
+                aria-label="Remove experience"
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            )}
             <span
-              className="text-gray-600 dark:text-gray-400"
+              className="leading-[1.1] text-gray-600 dark:text-gray-400"
               style={resumeFontSizeStyles.itemMeta}
             >
               {renderWithFeedback(
@@ -2053,9 +2763,9 @@ export function ResumeViewer({
             </span>
           </div>
         </div>
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex items-baseline justify-between gap-2">
           <p
-            className="min-w-0 flex-1 text-gray-700 dark:text-gray-300"
+            className="min-w-0 flex-1 leading-[1.1] text-gray-700 dark:text-gray-300"
             style={resumeFontSizeStyles.itemDetail}
           >
             {renderWithFeedback(
@@ -2073,7 +2783,7 @@ export function ResumeViewer({
             )}
           </p>
           <p
-            className="shrink-0 text-right text-gray-600 dark:text-gray-400"
+            className="shrink-0 text-right leading-[1.1] text-gray-600 dark:text-gray-400"
             style={resumeFontSizeStyles.itemDetail}
           >
             {renderWithFeedback(
@@ -2091,21 +2801,19 @@ export function ResumeViewer({
         </div>
         {entry.bullets.length > 0 && (
           <ul
-            className="mt-1 space-y-1 text-gray-600 dark:text-gray-400"
+            className="m-0 mt-0 list-none space-y-0.5 p-0 leading-[1.15] text-gray-600 dark:text-gray-400"
             style={resumeFontSizeStyles.body}
             role="list"
           >
             {entry.bullets.map((bullet, idx) => {
               const aiKey = `experience-${entry.id}-bullet-${idx}`;
-              const isAiOpen = activeAiTarget === aiKey;
+              const isAiOpen = isBulkOpen && activeAiTarget === aiKey;
               const bulletPath = `experience[${entryIndex}].bullets[${idx}]`;
               const bulletFeedback = pickFeedback(bulletPath);
-              const bulletSuggestion = aiSuggestions[aiKey];
-              const bulletValue = bulletSuggestion?.replacement ?? bullet;
               return (
                 <li
                   key={idx}
-                  className="group/bullet relative flex items-baseline gap-2"
+                  className="group/bullet relative flex items-start gap-1.5 leading-[1.15]"
                 >
                   <span
                     aria-hidden
@@ -2113,93 +2821,61 @@ export function ResumeViewer({
                   >
                     •
                   </span>
-                  {bulletSuggestion ? (
-                    <StaticText
-                      value={bulletValue}
-                      className="min-w-0 flex-1 break-words self-baseline block"
-                      fieldPath={bulletPath}
-                    />
-                  ) : (
-                    <EditableText
-                      value={bulletValue}
-                      onChange={(value) =>
-                        updateExperienceBullet(entry.id, idx, value)
-                      }
-                      placeholder="Describe your accomplishment..."
-                      className="min-w-0 flex-1 break-words self-baseline block"
-                      fieldPath={bulletPath}
-                    />
-                  )}
-                  <div className="absolute right-0 top-[0.1em] z-10 flex items-center gap-1 translate-x-full">
-                    {bulletFeedback ? (
-                      <QualityIndicator
-                        feedback={bulletFeedback.feedback}
-                        path={bulletFeedback.path}
-                        onApplySuggestion={onApplySuggestion}
-                      />
-                    ) : null}
-                    {bulletSuggestion ? (
-                      <AiDecisionButtons
-                        onAccept={() =>
-                          acceptAiSuggestion(aiKey, (value) =>
-                            updateExperienceBullet(entry.id, idx, value)
-                          )
-                        }
-                        onReject={() => clearAiSuggestion(aiKey)}
-                      />
-                    ) : (
+                  <EditableText
+                    value={bullet}
+                    onChange={(value) =>
+                      updateExperienceBullet(entry.id, idx, value)
+                    }
+                    placeholder="Describe your accomplishment..."
+                    className="min-w-0 flex-1 break-words self-start leading-[1.15] block"
+                    fieldPath={bulletPath}
+                  />
+                  {!isPrintPreviewMode && (
+                    <div className="absolute right-0 top-[0.1em] z-10 flex items-center gap-1 translate-x-full">
+                      {bulletFeedback ? (
+                        <QualityIndicator
+                          feedback={bulletFeedback.feedback}
+                          path={bulletFeedback.path}
+                          onApplySuggestion={onApplySuggestion}
+                        />
+                      ) : null}
                       <InlineAiAssist
                         isOpen={isAiOpen}
-                        onToggle={() => toggleAiTarget(aiKey)}
-                        onSubmit={(instruction) =>
-                          requestAiReplacement(aiKey, bullet, instruction, {
-                            section: "experience",
-                            field: "bullet",
-                            company: entry.company,
-                            role: entry.jobTitle,
-                            location: entry.location,
-                            dates: `${entry.startDate} - ${entry.endDate}`,
+                        onToggle={() =>
+                          openSingleFieldAiPanel({
+                            targetKey: aiKey,
+                            targetLabel: "Experience Bullet",
+                            path: bulletPath,
+                            text: bullet,
                           })
                         }
-                        isLoading={Boolean(aiLoading[aiKey])}
-                        error={aiErrors[aiKey]}
-                        placeholder="Rewrite this achievement..."
                         triggerClassName={aiTriggerClasses(
                           isAiOpen,
                           "group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto"
                         )}
+                        ariaLabel="Rewrite bullet with AI"
                       />
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={cn(
-                        "h-4 w-4 text-muted-foreground transition hover:text-destructive",
-                        isAiOpen || bulletSuggestion
-                          ? "opacity-100 pointer-events-auto"
-                          : "opacity-0 pointer-events-none group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto"
-                      )}
-                      onClick={() => removeExperienceBullet(entry.id, idx)}
-                      aria-label="Remove bullet"
-                      disabled={Boolean(bulletSuggestion)}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-4 w-4 text-muted-foreground transition hover:text-destructive",
+                          isAiOpen
+                            ? "opacity-100 pointer-events-auto"
+                            : "opacity-0 pointer-events-none group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto"
+                        )}
+                        onClick={() => removeExperienceBullet(entry.id, idx)}
+                        aria-label="Remove bullet"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  )}
                 </li>
               );
             })}
           </ul>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-          onClick={() => addExperienceBullet(entry.id)}
-        >
-          <Plus className="h-3 w-3" />
-          Add Bullet
-        </Button>
       </div>
     );
   };
@@ -2232,23 +2908,16 @@ export function ResumeViewer({
     project: ResumeData["projects"][number],
     projectIndex: number
   ) => {
-    const descriptionAiKey = `project-${project.id}-description`;
-    const isDescriptionAiOpen = activeAiTarget === descriptionAiKey;
     const namePath = `projects[${projectIndex}].name`;
-    const descriptionPath = `projects[${projectIndex}].description`;
     const technologyPaths = project.technologies.map(
       (_, index) => `projects[${projectIndex}].technologies[${index}]`
     );
-    const descriptionFeedback = pickFeedback(descriptionPath);
-    const descriptionSuggestion = aiSuggestions[descriptionAiKey];
-    const descriptionValue =
-      descriptionSuggestion?.replacement ?? project.description;
 
     return (
-      <div className="group space-y-1">
-        <div className="flex items-start justify-between gap-2">
+      <div className="group space-y-0.5">
+        <div className="flex items-baseline justify-between gap-2">
           <span
-            className="min-w-0 flex-1 font-semibold text-gray-900 dark:text-gray-100"
+            className="min-w-0 flex-1 font-semibold leading-[1.1] text-gray-900 dark:text-gray-100"
             style={resumeFontSizeStyles.itemTitle}
           >
             {renderWithFeedback(
@@ -2263,18 +2932,31 @@ export function ResumeViewer({
               />
             )}
           </span>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-              onClick={() => removeProjectEntry(project.id)}
-              aria-label="Remove project"
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
+          <div className="flex shrink-0 items-baseline gap-1">
+            {!isPrintPreviewMode && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-4 w-4 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-foreground"
+                onClick={() => addProjectBullet(project.id)}
+                aria-label="Add project bullet"
+              >
+                <Plus className="h-3 w-3" />
+              </Button>
+            )}
+            {!isPrintPreviewMode && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-4 w-4 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+                onClick={() => removeProjectEntry(project.id)}
+                aria-label="Remove project"
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            )}
             <span
-              className="text-right text-gray-500 dark:text-gray-400"
+              className="text-right leading-[1.1] text-gray-500 dark:text-gray-400"
               style={resumeFontSizeStyles.itemMeta}
             >
               {renderWithFeedback(
@@ -2293,91 +2975,21 @@ export function ResumeViewer({
             </span>
           </div>
         </div>
-        <div className="group/ai relative">
-          {descriptionSuggestion ? (
-            <StaticText
-              value={descriptionValue}
-              className="text-gray-700 dark:text-gray-300"
-              style={resumeFontSizeStyles.body}
-              multiline
-              fieldPath={descriptionPath}
-            />
-          ) : (
-            <EditableText
-              value={descriptionValue}
-              onChange={(value) =>
-                updateProjectEntry(project.id, { description: value })
-              }
-              placeholder="Project description"
-              className="text-gray-700 dark:text-gray-300"
-              style={resumeFontSizeStyles.body}
-              multiline
-              fieldPath={descriptionPath}
-            />
-          )}
-          <div className="absolute right-0 top-0 z-10 flex items-center gap-1 translate-x-full">
-            {descriptionFeedback ? (
-              <QualityIndicator
-                feedback={descriptionFeedback.feedback}
-                path={descriptionFeedback.path}
-                onApplySuggestion={onApplySuggestion}
-              />
-            ) : null}
-            {descriptionSuggestion ? (
-              <AiDecisionButtons
-                onAccept={() =>
-                  acceptAiSuggestion(descriptionAiKey, (value) =>
-                    updateProjectEntry(project.id, { description: value })
-                  )
-                }
-                onReject={() => clearAiSuggestion(descriptionAiKey)}
-              />
-            ) : (
-              <InlineAiAssist
-                isOpen={isDescriptionAiOpen}
-                onToggle={() => toggleAiTarget(descriptionAiKey)}
-                onSubmit={(instruction) =>
-                  requestAiReplacement(
-                    descriptionAiKey,
-                    project.description,
-                    instruction,
-                    {
-                      section: "projects",
-                      field: "description",
-                      projectName: project.name,
-                      technologies: project.technologies,
-                      bullets: project.bullets,
-                    }
-                  )
-                }
-                isLoading={Boolean(aiLoading[descriptionAiKey])}
-                error={aiErrors[descriptionAiKey]}
-                placeholder="Rewrite this project summary..."
-                triggerClassName={aiTriggerClasses(
-                  isDescriptionAiOpen,
-                  "group-hover/ai:opacity-100 group-hover/ai:pointer-events-auto"
-                )}
-              />
-            )}
-          </div>
-        </div>
         {project.bullets.length > 0 && (
           <ul
-            className="mt-1 space-y-1 text-gray-600 dark:text-gray-400"
+            className="m-0 mt-0 list-none space-y-0.5 p-0 leading-[1.15] text-gray-600 dark:text-gray-400"
             style={resumeFontSizeStyles.body}
             role="list"
           >
             {project.bullets.map((bullet, idx) => {
               const aiKey = `project-${project.id}-bullet-${idx}`;
-              const isAiOpen = activeAiTarget === aiKey;
+              const isAiOpen = isBulkOpen && activeAiTarget === aiKey;
               const bulletPath = `projects[${projectIndex}].bullets[${idx}]`;
               const bulletFeedback = pickFeedback(bulletPath);
-              const bulletSuggestion = aiSuggestions[aiKey];
-              const bulletValue = bulletSuggestion?.replacement ?? bullet;
               return (
                 <li
                   key={idx}
-                  className="group/bullet relative flex items-baseline gap-2"
+                  className="group/bullet relative flex items-start gap-1.5 leading-[1.15]"
                 >
                   <span
                     aria-hidden
@@ -2385,92 +2997,61 @@ export function ResumeViewer({
                   >
                     •
                   </span>
-                  {bulletSuggestion ? (
-                    <StaticText
-                      value={bulletValue}
-                      className="min-w-0 flex-1 break-words self-baseline block"
-                      fieldPath={bulletPath}
-                    />
-                  ) : (
-                    <EditableText
-                      value={bulletValue}
-                      onChange={(value) =>
-                        updateProjectBullet(project.id, idx, value)
-                      }
-                      placeholder="Project impact..."
-                      className="min-w-0 flex-1 break-words self-baseline block"
-                      fieldPath={bulletPath}
-                    />
-                  )}
-                  <div className="absolute right-0 top-[0.1em] z-10 flex items-center gap-1 translate-x-full">
-                    {bulletFeedback ? (
-                      <QualityIndicator
-                        feedback={bulletFeedback.feedback}
-                        path={bulletFeedback.path}
-                        onApplySuggestion={onApplySuggestion}
-                      />
-                    ) : null}
-                    {bulletSuggestion ? (
-                      <AiDecisionButtons
-                        onAccept={() =>
-                          acceptAiSuggestion(aiKey, (value) =>
-                            updateProjectBullet(project.id, idx, value)
-                          )
-                        }
-                        onReject={() => clearAiSuggestion(aiKey)}
-                      />
-                    ) : (
+                  <EditableText
+                    value={bullet}
+                    onChange={(value) =>
+                      updateProjectBullet(project.id, idx, value)
+                    }
+                    placeholder="Project impact..."
+                    className="min-w-0 flex-1 break-words self-start leading-[1.15] block"
+                    fieldPath={bulletPath}
+                  />
+                  {!isPrintPreviewMode && (
+                    <div className="absolute right-0 top-[0.1em] z-10 flex items-center gap-1 translate-x-full">
+                      {bulletFeedback ? (
+                        <QualityIndicator
+                          feedback={bulletFeedback.feedback}
+                          path={bulletFeedback.path}
+                          onApplySuggestion={onApplySuggestion}
+                        />
+                      ) : null}
                       <InlineAiAssist
                         isOpen={isAiOpen}
-                        onToggle={() => toggleAiTarget(aiKey)}
-                        onSubmit={(instruction) =>
-                          requestAiReplacement(aiKey, bullet, instruction, {
-                            section: "projects",
-                            field: "bullet",
-                            projectName: project.name,
-                            description: project.description,
-                            technologies: project.technologies,
+                        onToggle={() =>
+                          openSingleFieldAiPanel({
+                            targetKey: aiKey,
+                            targetLabel: "Project Bullet",
+                            path: bulletPath,
+                            text: bullet,
                           })
                         }
-                        isLoading={Boolean(aiLoading[aiKey])}
-                        error={aiErrors[aiKey]}
-                        placeholder="Rewrite this bullet..."
                         triggerClassName={aiTriggerClasses(
                           isAiOpen,
                           "group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto"
                         )}
+                        ariaLabel="Rewrite project bullet with AI"
                       />
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={cn(
-                        "h-4 w-4 text-muted-foreground transition hover:text-destructive",
-                        isAiOpen || bulletSuggestion
-                          ? "opacity-100 pointer-events-auto"
-                          : "opacity-0 pointer-events-none group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto"
-                      )}
-                      onClick={() => removeProjectBullet(project.id, idx)}
-                      aria-label="Remove bullet"
-                      disabled={Boolean(bulletSuggestion)}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "h-4 w-4 text-muted-foreground transition hover:text-destructive",
+                          isAiOpen
+                            ? "opacity-100 pointer-events-auto"
+                            : "opacity-0 pointer-events-none group-hover/bullet:opacity-100 group-hover/bullet:pointer-events-auto"
+                        )}
+                        onClick={() => removeProjectBullet(project.id, idx)}
+                        aria-label="Remove bullet"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  )}
                 </li>
               );
             })}
           </ul>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 gap-1 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-          onClick={() => addProjectBullet(project.id)}
-        >
-          <Plus className="h-3 w-3" />
-          Add Bullet
-        </Button>
       </div>
     );
   };
@@ -2522,10 +3103,10 @@ export function ResumeViewer({
     const locationPath = `education[${entryIndex}].location`;
 
     return (
-      <div className="group space-y-1">
-        <div className="flex items-start justify-between gap-2">
+      <div className="group space-y-0.5">
+        <div className="flex items-baseline justify-between gap-2">
           <p
-            className="font-semibold text-gray-900 dark:text-gray-100"
+            className="font-semibold leading-[1.1] text-gray-900 dark:text-gray-100"
             style={resumeFontSizeStyles.itemTitle}
           >
             {renderWithFeedback(
@@ -2542,18 +3123,20 @@ export function ResumeViewer({
               />
             )}
           </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
-              onClick={() => removeEducationEntry(entry.id)}
-              aria-label="Remove education"
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
+          <div className="flex items-baseline gap-1">
+            {!isPrintPreviewMode && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-4 w-4 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+                onClick={() => removeEducationEntry(entry.id)}
+                aria-label="Remove education"
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            )}
             <span
-              className="text-gray-600 dark:text-gray-400"
+              className="leading-[1.1] text-gray-600 dark:text-gray-400"
               style={resumeFontSizeStyles.itemMeta}
             >
               {renderWithFeedback(
@@ -2570,9 +3153,9 @@ export function ResumeViewer({
             </span>
           </div>
         </div>
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex items-baseline justify-between gap-2">
           <p
-            className="text-gray-700 dark:text-gray-300"
+            className="leading-[1.1] text-gray-700 dark:text-gray-300"
             style={resumeFontSizeStyles.itemDetail}
           >
             {renderWithFeedback(
@@ -2614,7 +3197,7 @@ export function ResumeViewer({
             )}
           </p>
           <p
-            className="text-right text-gray-600 dark:text-gray-400"
+            className="text-right leading-[1.1] text-gray-600 dark:text-gray-400"
             style={resumeFontSizeStyles.itemDetail}
           >
             {renderWithFeedback(
@@ -2687,17 +3270,19 @@ export function ResumeViewer({
       );
 
       return (
-        <span className="inline-flex items-center gap-1 group/skill">
+        <span className="group/skill relative inline-flex items-center">
           {skillPath ? renderWithFeedback(skillPath, content) : content}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-4 w-4 text-muted-foreground opacity-0 transition group-hover/skill:opacity-100 hover:text-destructive"
-            onClick={() => removeSkill(skill.id)}
-            aria-label="Remove skill"
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
+          {!isPrintPreviewMode && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute left-full top-1/2 z-10 ml-0.5 h-4 w-4 -translate-y-1/2 text-muted-foreground opacity-0 transition group-hover/skill:opacity-100 hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+              onClick={() => removeSkill(skill.id)}
+              aria-label="Remove skill"
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          )}
         </span>
       );
     };
@@ -2744,15 +3329,17 @@ export function ResumeViewer({
                   </Fragment>
                 ))}
               </p>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                onClick={() => addSkill(category)}
-                aria-label={`Add skill to ${category}`}
-              >
-                <Plus className="h-3 w-3" />
-              </Button>
+              {!isPrintPreviewMode && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                  onClick={() => addSkill(category)}
+                  aria-label={`Add skill to ${category}`}
+                >
+                  <Plus className="h-3 w-3" />
+                </Button>
+              )}
             </div>
           )
         )}
@@ -2769,15 +3356,17 @@ export function ResumeViewer({
                 </Fragment>
               ))}
             </p>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-muted-foreground hover:text-foreground"
-              onClick={() => addSkill("")}
-              aria-label="Add skill"
-            >
-              <Plus className="h-3 w-3" />
-            </Button>
+            {!isPrintPreviewMode && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                onClick={() => addSkill("")}
+                aria-label="Add skill"
+              >
+                <Plus className="h-3 w-3" />
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -2795,14 +3384,16 @@ export function ResumeViewer({
 
   // Pagination hooks for resume and cover letter
   const resumePagination = usePagination({
-    paperSize: pageSettings.paperSize,
-    margins: pageSettings.margins,
-    elementGap: 16, // space-y-4 = 1rem = 16px
+    paperSize: resolvedPageSettings.paperSize,
+    margins: resolvedPageSettings.resumeMargins,
+    elementGap: 4, // tighter item-to-item gap
+    headerElementGap: 8, // tighter gap after section headers
   });
+  resumePaginationRecalculateRef.current = resumePagination.recalculate;
 
   const coverLetterPagination = usePagination({
-    paperSize: pageSettings.paperSize,
-    margins: pageSettings.margins,
+    paperSize: resolvedPageSettings.paperSize,
+    margins: resolvedPageSettings.coverLetterMargins,
     elementGap: 24, // space-y-6 = 1.5rem = 24px
   });
 
@@ -2989,6 +3580,8 @@ export function ResumeViewer({
                   <Fragment key={item.key}>
                     {(() => {
                     const feedbackPath = `metadata.contactInfo.${item.key}`;
+                    const hasCustomHyperlinks =
+                      (hyperlinksByPath.get(feedbackPath)?.length ?? 0) > 0;
                     const input = (
                       <EditableText
                         value={item.value}
@@ -2997,7 +3590,7 @@ export function ResumeViewer({
                         fieldPath={feedbackPath}
                       />
                     );
-                      const node = item.link ? (
+                      const node = item.link && !hasCustomHyperlinks ? (
                         <a
                           href={item.href}
                           target="_blank"
@@ -3310,7 +3903,7 @@ export function ResumeViewer({
   // Calculate paper height in pixels for page containers
   const getPageHeightStyle = (pageDimensions: { pageHeightPx: number } | null) => {
     if (!pageDimensions) {
-      const { width, height } = PAPER_DIMENSIONS[pageSettings.paperSize];
+      const { width, height } = PAPER_DIMENSIONS[resolvedPageSettings.paperSize];
       return { aspectRatio: `${width} / ${height}` };
     }
     return { height: `${pageDimensions.pageHeightPx}px` };
@@ -3350,34 +3943,159 @@ export function ResumeViewer({
     return callbacks;
   }, [coverLetterElementDefs, coverLetterPagination]);
 
+  const bulkLineConstraints = useMemo(() => {
+    if (bulkScope.type !== "selection" || bulkMaxLines < 1) {
+      return [] as Array<{ path: string; constraint: FieldLengthConstraint }>;
+    }
+    const constraints = buildFieldLengthConstraints(bulkFields, bulkMaxLines);
+    return bulkFields.flatMap((field) => {
+      const constraint = constraints.get(field.path);
+      return constraint ? [{ path: field.path, constraint }] : [];
+    });
+  }, [buildFieldLengthConstraints, bulkFields, bulkMaxLines, bulkScope.type]);
+
+  const bulkLineConstraintSummary = useMemo(() => {
+    if (bulkLineConstraints.length === 0) return null;
+    let minCharsPerLine = Number.POSITIVE_INFINITY;
+    let minTotalChars = Number.POSITIVE_INFINITY;
+    for (const item of bulkLineConstraints) {
+      minCharsPerLine = Math.min(
+        minCharsPerLine,
+        item.constraint.maxCharsPerLine
+      );
+      minTotalChars = Math.min(minTotalChars, item.constraint.maxCharsTotal);
+    }
+    return {
+      minCharsPerLine,
+      minTotalChars,
+      constrainedCount: bulkLineConstraints.length,
+    };
+  }, [bulkLineConstraints]);
+
   return (
-    <div className="relative flex h-full flex-col">
-      {selectionState && selectionAnchor && !isBulkOpen && (
-        <div
-          className="fixed z-40"
-          style={{ top: selectionAnchor.top, left: selectionAnchor.left }}
-        >
-          <Button
-            type="button"
-            variant="secondary"
-            size="icon"
-            className="h-8 w-8 shadow-md"
-            onClick={() => {
-              setBulkFields(selectionState.fields);
-              setBulkTargetLabel(`Selection (${selectionState.fields.length})`);
-              setBulkPrompt("");
-              setBulkOps([]);
-              setBulkError(null);
-              setBulkScope({ type: "selection" });
-              setIsBulkOpen(true);
-            }}
-            aria-label="Rewrite selection with AI"
+    <HyperlinkContext.Provider
+      value={{
+        isPrintPreviewMode,
+        hyperlinksByPath,
+        hyperlinkUnderlineEnabled: resolvedLayoutPreferences.hyperlinkUnderline,
+      }}
+    >
+      <div className={cn("relative flex h-full flex-col", isPrintPreviewMode && "print-preview-mode")}>
+        {selectionState && selectionAnchor && !isBulkOpen && !isPrintPreviewMode && (
+          <div
+            className="fixed z-40 flex items-center gap-1"
+            style={{ top: selectionAnchor.top, left: selectionAnchor.left }}
           >
-            <Sparkles className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
-      {isBulkOpen && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              className="h-8 w-8 shadow-md"
+              onClick={() => {
+                openBulkPanel({
+                  fields: selectionState.fields,
+                  targetLabel: `Selection (${selectionState.fields.length})`,
+                  scope: { type: "selection" },
+                });
+              }}
+              aria-label="Rewrite selection with AI"
+            >
+              <Sparkles className="h-4 w-4" />
+            </Button>
+            {hyperlinkSelection && (
+              <Button
+                type="button"
+                variant={isHyperlinkPanelOpen ? "default" : "secondary"}
+                size="icon"
+                className="h-8 w-8 shadow-md"
+                onClick={() => {
+                  if (isHyperlinkPanelOpen) {
+                    setIsHyperlinkPanelOpen(false);
+                    setHyperlinkError(null);
+                    return;
+                  }
+                  openHyperlinkPanel();
+                }}
+                aria-label="Add hyperlink to selected text"
+              >
+                <Link2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        )}
+        {isHyperlinkPanelOpen &&
+          hyperlinkSelection &&
+          selectionAnchor &&
+          !isBulkOpen &&
+          !isPrintPreviewMode && (
+            <div
+              className="fixed z-40 w-[360px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl"
+              style={{
+                top: selectionAnchor.top + 40,
+                left: clamp(
+                  selectionAnchor.left,
+                  8,
+                  typeof window === "undefined"
+                    ? selectionAnchor.left
+                    : window.innerWidth - 360 - 8
+                ),
+              }}
+            >
+              <p className="text-xs font-medium">Hyperlink Selection</p>
+              <p className="mt-1 line-clamp-2 text-[10px] text-muted-foreground">
+                {`"${hyperlinkSelection.text}"`}
+              </p>
+              <Input
+                value={hyperlinkDraft}
+                onChange={(event) => {
+                  setHyperlinkDraft(event.target.value);
+                  setHyperlinkError(null);
+                }}
+                placeholder="https://example.com"
+                className="mt-2 h-8 text-xs"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    applyHyperlinkToSelection();
+                  }
+                }}
+              />
+              <div className="mt-2 flex items-center justify-between">
+                <span
+                  className={cn(
+                    "text-[10px]",
+                    hyperlinkError ? "text-destructive" : "text-muted-foreground"
+                  )}
+                >
+                  {hyperlinkError || "Supports https://, mailto:, tel:, or bare domains."}
+                </span>
+                <div className="flex items-center gap-1">
+                  {selectedHyperlink && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[10px]"
+                      onClick={removeHyperlinkFromSelection}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-6 px-2 text-[10px]"
+                    onClick={applyHyperlinkToSelection}
+                    disabled={!hyperlinkDraft.trim()}
+                  >
+                    {selectedHyperlink ? "Update Link" : "Apply Link"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+      {isBulkOpen && !isPrintPreviewMode && (
         <div
           className="absolute right-4 z-40 w-[380px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl"
           style={{ top: `${bulkPanelTop}px` }}
@@ -3410,6 +4128,7 @@ export function ResumeViewer({
                   setBulkError(null);
                   setBulkPrompt("");
                   setIsBulkCollapsed(false);
+                  setActiveAiTarget(null);
                   if (!selectionState) {
                     clearSelectionState();
                   }
@@ -3425,7 +4144,7 @@ export function ResumeViewer({
                 <Input
                   value={bulkPrompt}
                   onChange={(event) => setBulkPrompt(event.target.value)}
-                  placeholder="Tell AI how to improve the selection..."
+                  placeholder="Tell AI what to improve..."
                   className="h-8 text-xs"
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
@@ -3433,11 +4152,58 @@ export function ResumeViewer({
                       requestBulkRewrite(
                         bulkPrompt,
                         bulkFields,
-                        bulkScope
+                        bulkScope,
+                        bulkScope.type === "selection" ? bulkMaxLines : 0
                       );
                     }
                   }}
                 />
+                {bulkScope.type === "selection" && (
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-muted-foreground">
+                        Max lines per field
+                      </span>
+                      <ToggleGroup
+                        type="single"
+                        value={bulkMaxLines > 0 ? String(bulkMaxLines) : "off"}
+                        onValueChange={(value) => {
+                          if (!value || value === "off") {
+                            setBulkMaxLines(0);
+                            return;
+                          }
+                          const parsed = Number.parseInt(value, 10);
+                          setBulkMaxLines(Number.isFinite(parsed) ? parsed : 0);
+                        }}
+                        size="sm"
+                        variant="outline"
+                        className="justify-start"
+                      >
+                        <ToggleGroupItem value="off" className="h-6 px-2 text-[10px]">
+                          Off
+                        </ToggleGroupItem>
+                        {MAX_LINES_OPTIONS.map((option) => (
+                          <ToggleGroupItem
+                            key={option}
+                            value={String(option)}
+                            className="h-6 w-6 px-0 text-[10px]"
+                          >
+                            {option}
+                          </ToggleGroupItem>
+                        ))}
+                      </ToggleGroup>
+                    </div>
+                    {bulkLineConstraintSummary && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Budget: at least {bulkLineConstraintSummary.minCharsPerLine}
+                        {" "}chars/line and {bulkLineConstraintSummary.minTotalChars}
+                        {" "}chars total across{" "}
+                        {bulkLineConstraintSummary.constrainedCount} field
+                        {bulkLineConstraintSummary.constrainedCount === 1 ? "" : "s"}.
+                      </p>
+                    )}
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <span
                     className={cn(
@@ -3458,7 +4224,8 @@ export function ResumeViewer({
                       requestBulkRewrite(
                         bulkPrompt,
                         bulkFields,
-                        bulkScope
+                        bulkScope,
+                        bulkScope.type === "selection" ? bulkMaxLines : 0
                       )
                     }
                     disabled={bulkLoading || !bulkPrompt.trim()}
@@ -3532,7 +4299,7 @@ export function ResumeViewer({
           )}
         </div>
       )}
-      {isDebugOpen && (
+      {isDebugOpen && !isPrintPreviewMode && (
         <div className="absolute right-4 top-[60px] z-40 w-[360px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium">LLM Raw Output</p>
@@ -3570,12 +4337,47 @@ export function ResumeViewer({
             <Button
               variant="ghost"
               size="sm"
+              className="h-7 gap-1.5 px-2 text-[11px]"
+              onClick={exportResumeAsPdf}
+              disabled={isExportingPdf}
+            >
+              {isExportingPdf ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <FileDown className="h-3.5 w-3.5" />
+              )}
+              {isExportingPdf ? "Preparing..." : "Export PDF"}
+            </Button>
+            <Button
+              variant={isPrintPreviewMode ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 gap-1.5 px-2 text-[11px]"
+              onClick={() => setIsPrintPreviewMode((current) => !current)}
+              aria-label={
+                isPrintPreviewMode
+                  ? "Exit print preview mode"
+                  : "Enable print preview mode"
+              }
+              aria-pressed={isPrintPreviewMode}
+            >
+              {isPrintPreviewMode ? (
+                <EyeOff className="h-3.5 w-3.5" />
+              ) : (
+                <Eye className="h-3.5 w-3.5" />
+              )}
+              {isPrintPreviewMode ? "Exit Preview" : "Print Preview"}
+            </Button>
+            {!isPrintPreviewMode && (
+              <Button
+              variant="ghost"
+              size="sm"
               className="h-7 px-2 text-[11px]"
               onClick={() => setIsDebugOpen((current) => !current)}
               disabled={!analysis}
             >
               {isDebugOpen ? "Hide Debug" : "Debug"}
-            </Button>
+              </Button>
+            )}
           </div>
         </div>
 
@@ -3597,22 +4399,50 @@ export function ResumeViewer({
                     key={pageIndex}
                   className="document-paper rounded-sm overflow-visible"
                   style={{
-                      ...paperStyle,
+                      ...resumePaperStyle,
                       ...getPageHeightStyle(resumePagination.pageDimensions),
                       ...resumeTypographyStyle,
                     }}
                   >
-                    <div className="space-y-4">
-                      {resumeElements
-                        .filter((el) => resumeElementPages.get(el.id) === pageIndex)
-                        .map((element) => (
+                    <div className="flex flex-col">
+                      {(() => {
+                        const pageElements = resumeElements.filter(
+                          (el) => resumeElementPages.get(el.id) === pageIndex
+                        );
+                        return pageElements.map((element, index) => (
+                          (() => {
+                            const previousElement = pageElements[index - 1];
+                            const isExperienceEntry = element.id.startsWith("experience-");
+                            const isProjectEntry = element.id.startsWith("project-");
+                            const isEducationEntry = element.id.startsWith("education-");
+                            const hasSameSectionEntryBefore =
+                              (isExperienceEntry &&
+                                previousElement?.id.startsWith("experience-")) ||
+                              (isProjectEntry &&
+                                previousElement?.id.startsWith("project-")) ||
+                              (isEducationEntry &&
+                                previousElement?.id.startsWith("education-"));
+                            const gapClass =
+                              index === 0
+                                ? ""
+                                : element.isHeader
+                                  ? "mt-2"
+                                  : hasSameSectionEntryBefore
+                                    ? "mt-1.5"
+                                    : "mt-1";
+
+                            return (
                           <div
                             key={element.id}
                             ref={resumeRefCallbacks.get(element.id)}
+                            className={cn(gapClass)}
                           >
                             {element.render()}
                           </div>
-                        ))}
+                            );
+                          })()
+                        ));
+                      })()}
                     </div>
                   </div>
                 ))}
@@ -3633,7 +4463,7 @@ export function ResumeViewer({
                     key={pageIndex}
                   className="document-paper rounded-sm overflow-visible"
                   style={{
-                      ...paperStyle,
+                      ...coverLetterPaperStyle,
                       ...getPageHeightStyle(coverLetterPagination.pageDimensions),
                       ...coverLetterTypographyStyle,
                     }}
@@ -3657,6 +4487,7 @@ export function ResumeViewer({
           </div>
         </ScrollArea>
       </Tabs>
-    </div>
+      </div>
+    </HyperlinkContext.Provider>
   );
 }

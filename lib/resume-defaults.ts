@@ -31,6 +31,11 @@ export const DEFAULT_MARGINS: PageMargins = MARGIN_PRESETS.moderate;
 
 export const DEFAULT_PAGE_SETTINGS = {
   paperSize: "letter" as PaperSize,
+  resumeMargins: DEFAULT_MARGINS,
+  resumeMarginPreset: "moderate" as MarginPreset,
+  coverLetterMargins: DEFAULT_MARGINS,
+  coverLetterMarginPreset: "moderate" as MarginPreset,
+  // Legacy shared margin fields kept for backward compatibility.
   margins: DEFAULT_MARGINS,
   marginPreset: "moderate" as MarginPreset,
 };
@@ -62,13 +67,13 @@ export const DEFAULT_FONT_PREFERENCES = {
   family: "serif",
   sizes: {
     name: 24,
-    subtitle: 14,
-    contact: 14,
-    sectionTitle: 14,
-    itemTitle: 14,
-    itemDetail: 14,
+    subtitle: 12,
+    contact: 12,
+    sectionTitle: 12,
+    itemTitle: 12,
+    itemDetail: 12,
     itemMeta: 12,
-    body: 14,
+    body: 12,
   },
 } as const;
 
@@ -115,6 +120,7 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
       body: number;
     };
   };
+  hyperlinkUnderline: boolean;
 } = {
   experienceOrder: "title-first",
   educationOrder: "degree-first",
@@ -123,6 +129,7 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
   headerAlignment: DEFAULT_HEADER_ALIGNMENT,
   fontPreferences: DEFAULT_FONT_PREFERENCES,
   coverLetterFontPreferences: DEFAULT_COVER_LETTER_FONT_PREFERENCES,
+  hyperlinkUnderline: true,
 };
 
 export const DEFAULT_COVER_LETTER = {
@@ -155,4 +162,5 @@ export const DEFAULT_RESUME_DATA = {
   projects: [],
   education: [],
   skills: [],
+  hyperlinks: [],
 };

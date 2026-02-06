@@ -1,6 +1,7 @@
 "use client";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DEFAULT_LAYOUT_PREFERENCES } from "@/lib/resume-defaults";
 import type { ResumeData } from "@/types";
@@ -35,6 +36,9 @@ export function ResumeEditorPanel({
   const layoutPreferences = {
     ...DEFAULT_LAYOUT_PREFERENCES,
     ...resumeData.layoutPreferences,
+    hyperlinkUnderline:
+      resumeData.layoutPreferences?.hyperlinkUnderline ??
+      DEFAULT_LAYOUT_PREFERENCES.hyperlinkUnderline,
     contactOrder:
       resumeData.layoutPreferences?.contactOrder ??
       DEFAULT_LAYOUT_PREFERENCES.contactOrder,
@@ -195,6 +199,31 @@ export function ResumeEditorPanel({
                   })
                 }
               />
+              <div className="rounded-lg border border-border bg-card p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <h3 className="text-xs font-medium text-foreground">
+                      Hyperlink Underline
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground">
+                      Show or hide underline styling for resume hyperlinks.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={layoutPreferences.hyperlinkUnderline}
+                    onCheckedChange={(hyperlinkUnderline) =>
+                      onResumeUpdate({
+                        ...resumeData,
+                        layoutPreferences: {
+                          ...layoutPreferences,
+                          hyperlinkUnderline,
+                        },
+                      })
+                    }
+                    aria-label="Toggle hyperlink underlines"
+                  />
+                </div>
+              </div>
             </div>
           </TabsContent>
 

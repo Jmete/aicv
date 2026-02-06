@@ -96,18 +96,6 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
           </div>
 
           <div className="space-y-2">
-            <Label className="text-xs text-muted-foreground">Description</Label>
-            <Textarea
-              value={entry.description}
-              onChange={(e) =>
-                updateEntry(entry.id, { description: e.target.value })
-              }
-              placeholder="Brief description of the project..."
-              className="min-h-[60px] resize-none"
-            />
-          </div>
-
-          <div className="space-y-2">
             <Label className="text-xs text-muted-foreground">
               Technologies (comma-separated)
             </Label>

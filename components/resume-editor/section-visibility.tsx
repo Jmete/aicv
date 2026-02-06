@@ -62,17 +62,19 @@ export function SectionVisibility({
   };
 
   return (
-    <div className="space-y-4 rounded-lg border border-border bg-card p-4">
-      <h3 className="text-sm font-medium text-foreground">Visible Sections</h3>
-      <p className="text-xs text-muted-foreground">
-        Drag rows to reorder.
-      </p>
+    <div className="space-y-2 rounded-lg border border-border bg-card p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-[11px] font-medium text-foreground">
+          Visible Sections
+        </h3>
+        <p className="text-[10px] text-muted-foreground">Drag to reorder</p>
+      </div>
 
-      <div className="space-y-3">
+      <div className="space-y-1">
         {orderedSections.map((section) => (
           <div
             key={section}
-            className="flex items-center justify-between rounded-md border border-transparent px-1.5 py-1 transition-colors hover:border-border"
+            className="group flex items-center justify-between rounded px-1 py-0.5 transition-colors hover:bg-muted/40"
             draggable
             onDragStart={(event) => {
               setDragging(section);
@@ -83,10 +85,10 @@ export function SectionVisibility({
             onDrop={() => handleDrop(section)}
           >
             <div className="flex items-center gap-2">
-              <GripVertical className="h-4 w-4 text-muted-foreground/70" />
+              <GripVertical className="h-3.5 w-3.5 text-muted-foreground/70 transition-opacity group-hover:opacity-100" />
               <Label
                 htmlFor={`section-${section}`}
-                className="text-xs text-muted-foreground cursor-pointer"
+                className="cursor-pointer text-[11px] text-muted-foreground"
               >
                 {SECTION_LABELS[section]}
               </Label>

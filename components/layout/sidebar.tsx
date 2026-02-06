@@ -2,7 +2,7 @@
 
 import { Plus, Search, Settings, User } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -20,6 +20,12 @@ interface SidebarProps {
 
 export function Sidebar({ onNewApplication }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleNewApplicationClick = () => {
+    onNewApplication?.();
+    router.push("/");
+  };
 
   return (
     <TooltipProvider>
@@ -31,7 +37,7 @@ export function Sidebar({ onNewApplication }: SidebarProps) {
                 variant="ghost"
                 size="icon"
                 className="h-9 w-9"
-                onClick={onNewApplication}
+                onClick={handleNewApplicationClick}
               >
                 <Plus className="h-4 w-4" />
                 <span className="sr-only">New Application</span>

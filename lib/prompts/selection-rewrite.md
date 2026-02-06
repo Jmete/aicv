@@ -34,6 +34,9 @@ Input
 Constraints
 - Only target paths that exist in the selected fields or within the provided section.
 - If no fields are provided, return only `insert` operations for the given section root (e.g., `experience`, `projects`, `education`, `skills`) or its allowed arrays.
+- If length constraints are provided for a path, every `replace` value on that path must satisfy both:
+  - `maxCharsTotal`
+  - `maxLines` using the given `maxCharsPerLine` estimate
 - For inserts, only use array paths like:
   - experience
   - experience[i].bullets

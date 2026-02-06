@@ -57,11 +57,13 @@ export function getPageDimensions(
  * @param measurements - Array of element measurements with heights
  * @param contentHeightPx - Available content height per page in pixels
  * @param elementGap - Gap between elements in pixels (e.g., 16 for space-y-4)
+ * @param headerElementGap - Gap after headers in pixels (defaults to elementGap)
  */
 export function assignElementsToPages(
   measurements: ElementMeasurement[],
   contentHeightPx: number,
-  elementGap: number = 0
+  elementGap: number = 0,
+  headerElementGap: number = elementGap
 ): PageAssignment[] {
   if (measurements.length === 0) {
     return [{ pageIndex: 0, elements: [] }];
@@ -75,8 +77,15 @@ export function assignElementsToPages(
     const element = measurements[i];
     const nextElement = measurements[i + 1];
 
-    // Add gap for elements after the first on current page
-    const gapHeight = currentPage.elements.length > 0 ? elementGap : 0;
+    // Add gap for elements after the first on current page.
+    // Header -> content can use a smaller spacing than normal content -> content.
+    const previousElement = currentPage.elements[currentPage.elements.length - 1];
+    const gapHeight =
+      currentPage.elements.length > 0
+        ? previousElement?.isHeader
+          ? headerElementGap
+          : elementGap
+        : 0;
 
     // Check if element + gap fits on current page
     if (currentHeight + gapHeight + element.height <= contentHeightPx) {
@@ -85,7 +94,12 @@ export function assignElementsToPages(
       if (
         element.isHeader &&
         nextElement &&
-        currentHeight + gapHeight + element.height + elementGap + nextElement.height > contentHeightPx
+        currentHeight +
+          gapHeight +
+          element.height +
+          headerElementGap +
+          nextElement.height >
+          contentHeightPx
       ) {
         // Start new page with the header (no gap for first element)
         if (currentPage.elements.length > 0) {

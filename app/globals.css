@@ -134,6 +134,14 @@ body {
   color: hsl(var(--muted-foreground));
 }
 
+.resume-inline-link {
+  color: inherit;
+}
+
+.print-preview-mode .editable-field:empty::before {
+  content: "";
+}
+
 /* Multi-page document styling */
 .resume-pages,
 .cover-letter-pages {
