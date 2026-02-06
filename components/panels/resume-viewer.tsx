@@ -8,7 +8,12 @@ import {
   useRef,
   useState,
 } from "react";
-import type { ClipboardEvent, CSSProperties, KeyboardEvent, ReactNode } from "react";
+import type {
+  ClipboardEvent,
+  CSSProperties,
+  KeyboardEvent,
+  ReactNode,
+} from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -225,12 +230,6 @@ function InlineAiAssist({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!isOpen) {
-      setPrompt("");
-    }
-  }, [isOpen]);
-
-  useEffect(() => {
     if (isOpen) {
       inputRef.current?.focus();
     }
@@ -245,6 +244,7 @@ function InlineAiAssist({
     const trimmed = prompt.trim();
     if (!trimmed || isLoading) return;
     onSubmit(trimmed);
+    setPrompt("");
   };
 
   return (
@@ -259,6 +259,9 @@ function InlineAiAssist({
         )}
         onClick={(event) => {
           event.stopPropagation();
+          if (isOpen) {
+            setPrompt("");
+          }
           onToggle();
         }}
         aria-label="AI suggestions"
@@ -268,7 +271,7 @@ function InlineAiAssist({
       {isOpen && (
         <div
           className={cn(
-            "absolute right-0 top-full z-20 mt-2 w-72 rounded-md border border-border bg-white p-2 shadow-lg",
+            "absolute right-0 top-full z-50 mt-2 w-72 rounded-md border border-border bg-white p-2 shadow-lg",
             panelClassName
           )}
         >
@@ -456,6 +459,16 @@ type BulkOperation = {
     | "none";
 };
 
+type InlineRewriteResponse = {
+  replacement?: string;
+  error?: string;
+};
+
+type SelectionRewriteResponse = {
+  operations?: Array<Omit<BulkOperation, "id">>;
+  error?: string;
+};
+
 const SECTION_LABELS: Record<SectionKey, string> = {
   summary: "Summary",
   experience: "Experience",
@@ -486,10 +499,6 @@ function QualityIndicator({
   const [replacementDrafts, setReplacementDrafts] = useState<
     Record<string, string>
   >({});
-
-  if (!feedback || feedback.quality !== "needs improvement") {
-    return null;
-  }
 
   const updateReplacement = (suggestionId: string, value: string) => {
     setReplacementDrafts((current) => ({
@@ -530,6 +539,10 @@ function QualityIndicator({
   useEffect(() => {
     return () => clearCloseTimer();
   }, []);
+
+  if (!feedback || feedback.quality !== "needs improvement") {
+    return null;
+  }
 
   return (
     <div
@@ -705,7 +718,7 @@ export function ResumeViewer({
       options?: {
         wrapperClassName?: string;
         indicatorClassName?: string;
-        wrapperElement?: keyof JSX.IntrinsicElements;
+        wrapperElement?: "span" | "div";
       }
     ) => {
       const match = pickFeedback(paths);
@@ -911,9 +924,9 @@ export function ResumeViewer({
       });
 
       const rawText = await response.text();
-      let payload: { replacement?: string; error?: string } | null = null;
+      let payload: InlineRewriteResponse | null = null;
       try {
-        payload = rawText ? (JSON.parse(rawText) as typeof payload) : null;
+        payload = rawText ? (JSON.parse(rawText) as InlineRewriteResponse) : null;
       } catch {
         payload = null;
       }
@@ -1059,12 +1072,12 @@ export function ResumeViewer({
     }
     if (section === "education") {
       return education.flatMap((entry, index) => [
-        { path: `education[${index}].degree`, text: entry.degree },
-        { path: `education[${index}].institution`, text: entry.institution },
-        { path: `education[${index}].location`, text: entry.location },
-        { path: `education[${index}].field`, text: entry.field },
-        { path: `education[${index}].graduationDate`, text: entry.graduationDate },
-        { path: `education[${index}].gpa`, text: entry.gpa },
+        { path: `education[${index}].degree`, text: entry.degree ?? "" },
+        { path: `education[${index}].institution`, text: entry.institution ?? "" },
+        { path: `education[${index}].location`, text: entry.location ?? "" },
+        { path: `education[${index}].field`, text: entry.field ?? "" },
+        { path: `education[${index}].graduationDate`, text: entry.graduationDate ?? "" },
+        { path: `education[${index}].gpa`, text: entry.gpa ?? "" },
       ]);
     }
     if (section === "skills") {
@@ -1076,7 +1089,7 @@ export function ResumeViewer({
     return [];
   }, [metadata.summary, experience, projects, education, skills]);
 
-  const buildAllowedTargets = (
+  const buildAllowedTargets = useCallback((
     fields: SelectedField[],
     scope: { type: "selection" | "section"; section?: string }
   ) => {
@@ -1136,9 +1149,9 @@ export function ResumeViewer({
     }
 
     return { allowedPaths, allowedDeletes, allowedInserts };
-  };
+  }, []);
 
-  const normalizeBulkOps = (
+  const normalizeBulkOps = useCallback((
     operations: Array<Omit<BulkOperation, "id">>,
     scope: { type: "selection" | "section"; section?: string },
     fields: SelectedField[]
@@ -1170,9 +1183,9 @@ export function ResumeViewer({
       }
       return [];
     });
-  };
+  }, [buildAllowedTargets]);
 
-  const requestBulkRewrite = async (
+  const requestBulkRewrite = useCallback(async (
     instruction: string,
     fields: SelectedField[],
     scope: { type: "selection" | "section"; section?: string }
@@ -1200,10 +1213,10 @@ export function ResumeViewer({
       });
 
       const rawText = await response.text();
-      let payload: { operations?: Array<Omit<BulkOperation, "id">>; error?: string } | null =
-        null;
+      let payload: SelectionRewriteResponse | null = null;
       try {
-        payload = rawText ? (JSON.parse(rawText) as typeof payload) : null;
+        payload =
+          rawText ? (JSON.parse(rawText) as SelectionRewriteResponse) : null;
       } catch {
         payload = null;
       }
@@ -1226,7 +1239,7 @@ export function ResumeViewer({
     } finally {
       setBulkLoading(false);
     }
-  };
+  }, [normalizeBulkOps]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -1475,7 +1488,7 @@ export function ResumeViewer({
     });
   }, [resolvedLayoutPreferences.sectionOrder]);
 
-  const updateMetadata = (updates: Partial<ResumeData["metadata"]>) => {
+  const updateMetadata = useCallback((updates: Partial<ResumeData["metadata"]>) => {
     onResumeUpdate({
       ...resumeData,
       metadata: {
@@ -1483,9 +1496,9 @@ export function ResumeViewer({
         ...updates,
       },
     });
-  };
+  }, [onResumeUpdate, resumeData, metadata]);
 
-  const updateContactInfo = (
+  const updateContactInfo = useCallback((
     updates: Partial<ResumeData["metadata"]["contactInfo"]>
   ) => {
     updateMetadata({
@@ -1494,7 +1507,7 @@ export function ResumeViewer({
         ...updates,
       },
     });
-  };
+  }, [updateMetadata, metadata.contactInfo]);
 
   const updateLayoutPreferences = (
     updates: Partial<ResumeData["layoutPreferences"]>
@@ -1624,7 +1637,7 @@ export function ResumeViewer({
     });
   };
 
-  const updateCoverLetter = (updates: Partial<ResumeData["coverLetter"]>) => {
+  const updateCoverLetter = useCallback((updates: Partial<ResumeData["coverLetter"]>) => {
     onResumeUpdate({
       ...resumeData,
       coverLetter: {
@@ -1632,7 +1645,7 @@ export function ResumeViewer({
         ...updates,
       },
     });
-  };
+  }, [onResumeUpdate, resumeData, coverLetter]);
 
   const parseCommaList = (value: string) =>
     value
@@ -1876,20 +1889,54 @@ export function ResumeViewer({
   };
 
   // Granular renderers for pagination
-  const renderSectionHeader = (title: string, addButton?: ReactNode) => (
-    <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
-      <h2
-        className="font-bold uppercase tracking-wide"
-        style={resumeFontSizeStyles.sectionTitle}
-      >
-        {title}
-      </h2>
-      {addButton}
-    </div>
-  );
+  const renderSectionHeader = (
+    title: string,
+    section: SectionKey,
+    addButton?: ReactNode
+  ) => {
+    const sectionAiKey = `section-ai-${section}`;
+    const isSectionAiOpen = activeAiTarget === sectionAiKey;
+    const isSectionAiLoading =
+      bulkLoading &&
+      bulkScope.type === "section" &&
+      bulkScope.section === section;
+    const sectionAiError =
+      bulkScope.type === "section" && bulkScope.section === section
+        ? bulkError
+        : null;
 
-  const renderSummaryHeader = () =>
-    renderSectionHeader("Summary");
+    return (
+      <div className="flex items-center justify-between border-b border-gray-300 pb-1 text-gray-900 dark:text-gray-100 dark:border-gray-700">
+        <div className="flex min-w-0 items-center gap-1">
+          <h2
+            className="font-bold uppercase tracking-wide"
+            style={resumeFontSizeStyles.sectionTitle}
+          >
+            {title}
+          </h2>
+          <InlineAiAssist
+            isOpen={isSectionAiOpen}
+            onToggle={() => toggleAiTarget(sectionAiKey)}
+            onSubmit={(instruction) => {
+              window.dispatchEvent(
+                new CustomEvent("resume-section-ai", {
+                  detail: { section, instruction },
+                })
+              );
+              setActiveAiTarget(null);
+            }}
+            isLoading={isSectionAiLoading}
+            error={sectionAiError}
+            placeholder={`Ask AI to improve the ${title.toLowerCase()} section...`}
+            triggerClassName="h-5 w-5 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+          />
+        </div>
+        {addButton}
+      </div>
+    );
+  };
+
+  const renderSummaryHeader = () => renderSectionHeader("Summary", "summary");
 
   const renderSummaryContent = () => (
     renderWithFeedback(
@@ -1914,6 +1961,7 @@ export function ResumeViewer({
   const renderExperienceHeader = () =>
     renderSectionHeader(
       "Experience",
+      "experience",
       <Button
         variant="ghost"
         size="sm"
@@ -2168,6 +2216,7 @@ export function ResumeViewer({
   const renderProjectsHeader = () =>
     renderSectionHeader(
       "Projects",
+      "projects",
       <Button
         variant="ghost"
         size="sm"
@@ -2438,6 +2487,7 @@ export function ResumeViewer({
   const renderEducationHeader = () =>
     renderSectionHeader(
       "Education",
+      "education",
       <Button
         variant="ghost"
         size="sm"
@@ -2596,6 +2646,7 @@ export function ResumeViewer({
   const renderSkillsHeader = () =>
     renderSectionHeader(
       "Skills",
+      "skills",
       <div className="flex items-center gap-2">
         <Button
           variant="ghost"
@@ -2834,7 +2885,7 @@ export function ResumeViewer({
   );
 
   // Build the list of measurable elements for the resume (granular for proper pagination)
-  const resumeElements = useMemo(() => {
+  const resumeElements = (() => {
     const elements: Array<{ id: string; isHeader: boolean; render: () => ReactNode }> = [];
 
     // Header is always first
@@ -2914,26 +2965,25 @@ export function ResumeViewer({
                   href: string;
                 };
 
-                const contactItems = contactOrder
-                  .map((key) => {
-                    const field = contactFieldMap[key];
-                    if (!field) return null;
-                    const value = metadata.contactInfo[key] ?? "";
-                    if (field.optional && value.trim().length === 0) {
-                      return null;
-                    }
-                    const onChange = (nextValue: string) =>
-                      updateContactInfo({ [key]: nextValue });
-                    return {
-                      key,
-                      value,
-                      placeholder: field.placeholder,
-                      onChange,
-                      link: field.link,
-                      href: field.link ? normalizeProfileUrl(value) : "",
-                    };
-                  })
-                  .filter((item): item is ContactItem => Boolean(item));
+                const contactItems: ContactItem[] = [];
+                for (const key of contactOrder) {
+                  const field = contactFieldMap[key];
+                  if (!field) continue;
+                  const value = metadata.contactInfo[key] ?? "";
+                  if (field.optional && value.trim().length === 0) {
+                    continue;
+                  }
+                  const onChange = (nextValue: string) =>
+                    updateContactInfo({ [key]: nextValue });
+                  contactItems.push({
+                    key,
+                    value,
+                    placeholder: field.placeholder,
+                    onChange,
+                    link: field.link,
+                    href: field.link ? normalizeProfileUrl(value) : "",
+                  });
+                }
 
                 return contactItems.map((item, index) => (
                   <Fragment key={item.key}>
@@ -3078,30 +3128,7 @@ export function ResumeViewer({
     }
 
     return elements;
-  }, [
-    metadata,
-    orderedSections,
-    sectionVisibility,
-    experience,
-    projects,
-    education,
-    skills,
-    groupedSkills,
-    ungroupedSkills,
-    experienceOrder,
-    educationOrder,
-    contactOrder,
-    contactFieldMap,
-    normalizeProfileUrl,
-    headerAlignment,
-    resumeFontSizeStyles,
-    getAlignmentClass,
-    renderInlineAlignment,
-    updateContactInfo,
-    updateHeaderAlignment,
-    pickFeedback,
-    renderWithFeedback,
-  ]);
+  })();
 
   // Build cover letter elements
   const coverLetterElements = useMemo(() => {
@@ -3230,16 +3257,24 @@ export function ResumeViewer({
     });
 
     return elements;
-  }, [metadata, coverLetter, todayFormatted, coverLetterFontSizeStyles]);
+  }, [
+    metadata,
+    coverLetter,
+    todayFormatted,
+    coverLetterFontSizeStyles,
+    updateContactInfo,
+    updateCoverLetter,
+    updateMetadata,
+  ]);
 
   // Register elements with pagination hooks
   useEffect(() => {
     resumePagination.setElements(resumeElementDefs);
-  }, [resumeElementDefs, resumePagination.setElements]);
+  }, [resumeElementDefs, resumePagination]);
 
   useEffect(() => {
     coverLetterPagination.setElements(coverLetterElementDefs);
-  }, [coverLetterElementDefs, coverLetterPagination.setElements]);
+  }, [coverLetterElementDefs, coverLetterPagination]);
 
   // Map element IDs to their page assignments, defaulting to page 0 for unmeasured elements
   const resumeElementPages = useMemo(() => {
@@ -3305,7 +3340,7 @@ export function ResumeViewer({
       callbacks.set(el.id, resumePagination.measureRef(el.id));
     }
     return callbacks;
-  }, [resumeElementDefs, resumePagination.measureRef]);
+  }, [resumeElementDefs, resumePagination]);
 
   const coverLetterRefCallbacks = useMemo(() => {
     const callbacks = new Map<string, (el: HTMLElement | null) => void>();
@@ -3313,7 +3348,7 @@ export function ResumeViewer({
       callbacks.set(el.id, coverLetterPagination.measureRef(el.id));
     }
     return callbacks;
-  }, [coverLetterElementDefs, coverLetterPagination.measureRef]);
+  }, [coverLetterElementDefs, coverLetterPagination]);
 
   return (
     <div className="relative flex h-full flex-col">
@@ -3557,11 +3592,10 @@ export function ResumeViewer({
                 onMouseUp={collectSelectedFields}
                 onKeyUp={collectSelectedFields}
               >
-                {/* eslint-disable-next-line react-hooks/refs */}
                 {resumePageIndices.map((pageIndex) => (
                   <div
                     key={pageIndex}
-                  className="document-paper rounded-sm overflow-hidden"
+                  className="document-paper rounded-sm overflow-visible"
                   style={{
                       ...paperStyle,
                       ...getPageHeightStyle(resumePagination.pageDimensions),
@@ -3594,11 +3628,10 @@ export function ResumeViewer({
                 ref={coverLetterPagination.containerRef}
                 className="cover-letter-pages flex flex-col gap-8"
               >
-                {/* eslint-disable-next-line react-hooks/refs */}
                 {coverLetterPageIndices.map((pageIndex) => (
                   <div
                     key={pageIndex}
-                  className="document-paper rounded-sm overflow-hidden"
+                  className="document-paper rounded-sm overflow-visible"
                   style={{
                       ...paperStyle,
                       ...getPageHeightStyle(coverLetterPagination.pageDimensions),

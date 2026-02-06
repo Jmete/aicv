@@ -10,29 +10,14 @@ interface HeaderAlignmentEditorProps {
   onChange: (alignment: HeaderAlignment) => void;
 }
 
-export function HeaderAlignmentEditor({
-  alignment,
-  onChange,
-}: HeaderAlignmentEditorProps) {
-  const updateAlignment = (
-    field: keyof HeaderAlignment,
-    value: TextAlignment
-  ) => {
-    onChange({
-      ...alignment,
-      [field]: value,
-    });
-  };
+interface AlignmentRowProps {
+  label: string;
+  value: TextAlignment;
+  onValueChange: (value: TextAlignment) => void;
+}
 
-  const AlignmentRow = ({
-    label,
-    value,
-    onValueChange,
-  }: {
-    label: string;
-    value: TextAlignment;
-    onValueChange: (value: TextAlignment) => void;
-  }) => (
+function AlignmentRow({ label, value, onValueChange }: AlignmentRowProps) {
+  return (
     <div className="flex items-center justify-between gap-3">
       <Label className="text-xs text-muted-foreground">{label}</Label>
       <ToggleGroup
@@ -62,6 +47,21 @@ export function HeaderAlignmentEditor({
       </ToggleGroup>
     </div>
   );
+}
+
+export function HeaderAlignmentEditor({
+  alignment,
+  onChange,
+}: HeaderAlignmentEditorProps) {
+  const updateAlignment = (
+    field: keyof HeaderAlignment,
+    value: TextAlignment
+  ) => {
+    onChange({
+      ...alignment,
+      [field]: value,
+    });
+  };
 
   return (
     <div className="space-y-4 rounded-lg border border-border bg-card p-4">

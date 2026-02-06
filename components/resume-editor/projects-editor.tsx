@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,32 +13,6 @@ interface ProjectsEditorProps {
 }
 
 export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
-  const [technologyInputs, setTechnologyInputs] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    setTechnologyInputs((prev) => {
-      const next = { ...prev };
-      const ids = new Set(projects.map((project) => project.id));
-      let changed = false;
-
-      Object.keys(next).forEach((id) => {
-        if (!ids.has(id)) {
-          delete next[id];
-          changed = true;
-        }
-      });
-
-      projects.forEach((project) => {
-        if (next[project.id] === undefined) {
-          next[project.id] = project.technologies.join(", ");
-          changed = true;
-        }
-      });
-
-      return changed ? next : prev;
-    });
-  }, [projects]);
-
   const addEntry = () => {
     const newEntry: ProjectEntry = {
       id: crypto.randomUUID(),
@@ -84,7 +57,6 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
   };
 
   const handleTechnologiesChange = (id: string, value: string) => {
-    setTechnologyInputs((prev) => ({ ...prev, [id]: value }));
     const technologies = value
       .split(",")
       .map((t) => t.trim())
@@ -140,7 +112,7 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
               Technologies (comma-separated)
             </Label>
             <Input
-              value={technologyInputs[entry.id] ?? entry.technologies.join(", ")}
+              value={entry.technologies.join(", ")}
               onChange={(e) =>
                 handleTechnologiesChange(entry.id, e.target.value)
               }

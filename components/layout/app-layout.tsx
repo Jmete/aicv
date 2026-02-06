@@ -7,7 +7,7 @@ import { ResumeViewer } from "@/components/panels/resume-viewer";
 import { ResumeEditorPanel } from "@/components/resume-editor";
 import { DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
 import { buildResumeDataFromImport, setResumeValueAtPath } from "@/lib/resume-analysis";
-import type { ResumeAnalysisState, ResumeData } from "@/types";
+import type { FieldFeedback, ResumeAnalysisState, ResumeData } from "@/types";
 
 export interface ApplicationFormData {
   companyName: string;
@@ -142,7 +142,7 @@ export function AppLayout() {
       });
       setResumeAnalysis((current) => {
         if (!current) return current;
-        const nextFeedback = current.fieldFeedback.map((entry) => {
+        const nextFeedback: FieldFeedback[] = current.fieldFeedback.map((entry) => {
           if (entry.path !== path) return entry;
           const remaining = entry.improvementSuggestions.filter(
             (suggestion) => suggestion.id !== suggestionId

@@ -1,26 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Bell, FileText, Palette } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
+import { ResumeViewer } from "@/components/panels/resume-viewer";
+import { ResumeEditorPanel } from "@/components/resume-editor";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DEFAULT_LAYOUT_PREFERENCES, DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
+import { buildResumeDataFromImport, setResumeValueAtPath } from "@/lib/resume-analysis";
+import { DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
 import { cn } from "@/lib/utils";
-import type { ResumeData } from "@/types";
-import { EducationEditor } from "@/components/resume-editor/education-editor";
-import { ExperienceEditor } from "@/components/resume-editor/experience-editor";
-import { MetadataEditor } from "@/components/resume-editor/metadata-editor";
-import { ProjectsEditor } from "@/components/resume-editor/projects-editor";
-import { SkillsEditor } from "@/components/resume-editor/skills-editor";
+import type { FieldFeedback, ResumeAnalysisState, ResumeData } from "@/types";
 
 const settingsOptions = [
   {
-    id: "resume-data",
-    label: "Resume Data",
-    description: "Manage your core resume details and sections.",
+    id: "default-resume",
+    label: "Default Resume",
+    description: "Edit and save the default resume used in the main editor.",
     icon: FileText,
   },
   {
@@ -35,44 +32,107 @@ const settingsOptions = [
     description: "Control alerts and status updates.",
     icon: Bell,
   },
-];
+] as const;
+
+type SettingsOptionId = (typeof settingsOptions)[number]["id"];
 
 export default function SettingsPage() {
   const [resumeData, setResumeData] = useState<ResumeData>(DEFAULT_RESUME_DATA);
   const [isLoading, setIsLoading] = useState(true);
+  const [resumeAnalysis, setResumeAnalysis] =
+    useState<ResumeAnalysisState | null>(null);
+  const [isImportingResume, setIsImportingResume] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
+  const [activeOption, setActiveOption] =
+    useState<SettingsOptionId>("default-resume");
 
-  const layoutPreferences = useMemo(
-    () => ({
-      ...DEFAULT_LAYOUT_PREFERENCES,
-      ...resumeData.layoutPreferences,
-      contactOrder:
-        resumeData.layoutPreferences?.contactOrder ??
-        DEFAULT_LAYOUT_PREFERENCES.contactOrder,
-      headerAlignment: {
-        ...DEFAULT_LAYOUT_PREFERENCES.headerAlignment,
-        ...resumeData.layoutPreferences?.headerAlignment,
-      },
-      fontPreferences: {
-        ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences,
-        ...resumeData.layoutPreferences?.fontPreferences,
-        sizes: {
-          ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences.sizes,
-          ...resumeData.layoutPreferences?.fontPreferences?.sizes,
-        },
-      },
-      coverLetterFontPreferences: {
-        ...DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences,
-        ...resumeData.layoutPreferences?.coverLetterFontPreferences,
-        sizes: {
-          ...DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences.sizes,
-          ...resumeData.layoutPreferences?.coverLetterFontPreferences?.sizes,
-        },
-      },
-    }),
-    [resumeData.layoutPreferences]
+  const activeOptionData = settingsOptions.find(
+    (option) => option.id === activeOption
+  );
+
+  const handleResumeUpdate = useCallback((data: ResumeData) => {
+    setResumeData(data);
+  }, []);
+
+  const handleImportResume = useCallback(async (file: File) => {
+    setIsImportingResume(true);
+    setImportError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/resume-import", {
+        method: "POST",
+        body: formData,
+      });
+      const rawText = await response.text();
+      let payload: any = {};
+      if (rawText) {
+        try {
+          payload = JSON.parse(rawText);
+        } catch {
+          throw new Error("Import failed. Server returned invalid JSON.");
+        }
+      }
+      if (!response.ok) {
+        throw new Error(payload?.error || "Import failed.");
+      }
+
+      setResumeData((current) =>
+        buildResumeDataFromImport(current, payload.resume)
+      );
+      setResumeAnalysis({
+        resume: payload.resume,
+        fieldFeedback: payload.fieldFeedback,
+        raw: payload.raw ?? payload,
+      });
+    } catch (error) {
+      console.error("Error importing resume:", error);
+      setImportError(
+        error instanceof Error ? error.message : "Failed to import resume."
+      );
+    } finally {
+      setIsImportingResume(false);
+    }
+  }, []);
+
+  const handleApplySuggestion = useCallback(
+    (path: string, suggestionId: string, replacement: string) => {
+      setResumeData((current) => {
+        const categoryMatch = path.match(/^skills\[(\d+)\]\.category$/);
+        if (categoryMatch) {
+          const index = Number(categoryMatch[1]);
+          const target = current.skills[index];
+          if (!target) return current;
+          return {
+            ...current,
+            skills: current.skills.map((skill) =>
+              skill.category === target.category
+                ? { ...skill, category: replacement }
+                : skill
+            ),
+          };
+        }
+        return setResumeValueAtPath(current, path, replacement);
+      });
+      setResumeAnalysis((current) => {
+        if (!current) return current;
+        const nextFeedback: FieldFeedback[] = current.fieldFeedback.map((entry) => {
+          if (entry.path !== path) return entry;
+          const remaining = entry.improvementSuggestions.filter(
+            (suggestion) => suggestion.id !== suggestionId
+          );
+          if (remaining.length === 0) {
+            return { ...entry, quality: "good", improvementSuggestions: [] };
+          }
+          return { ...entry, improvementSuggestions: remaining };
+        });
+        return { ...current, fieldFeedback: nextFeedback };
+      });
+    },
+    []
   );
 
   useEffect(() => {
@@ -85,6 +145,8 @@ export default function SettingsPage() {
         const data = await response.json();
         if (isActive) {
           setResumeData(data);
+          setResumeAnalysis(null);
+          setImportError(null);
           setSaveStatus("saved");
         }
       } catch (error) {
@@ -142,45 +204,11 @@ export default function SettingsPage() {
             </Link>
           </Button>
           <h1 className="text-sm font-medium">Settings</h1>
-        </header>
-
-        <div className="flex flex-1 overflow-hidden">
-          <div className="w-80 shrink-0 border-r border-border">
-            <div className="flex h-full flex-col">
-              <ScrollArea className="flex-1">
-                <ul className="space-y-2 p-4">
-                  {settingsOptions.map((option) => {
-                    const Icon = option.icon;
-                    return (
-                      <li key={option.id}>
-                        <div
-                          className={cn(
-                            "flex items-start gap-3 rounded-md border border-transparent px-3 py-2",
-                            option.id === "resume-data" && "border-border bg-accent"
-                          )}
-                        >
-                          <Icon className="mt-0.5 h-4 w-4 text-muted-foreground" />
-                          <div>
-                            <p className="text-sm font-medium text-foreground">
-                              {option.label}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {option.description}
-                            </p>
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </ScrollArea>
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-hidden p-8">
+          <p className="text-xs text-muted-foreground">{activeOptionData?.description}</p>
+          {activeOption === "default-resume" && (
             <div
               className={cn(
-                "mb-2 text-xs",
+                "ml-auto text-xs",
                 saveStatus === "error"
                   ? "text-destructive"
                   : "text-muted-foreground"
@@ -194,132 +222,80 @@ export default function SettingsPage() {
                 ? "Save failed"
                 : "Saved"}
             </div>
-            <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-card">
-              <Tabs defaultValue="info" className="flex h-full flex-col">
-                <div className="flex h-[52px] items-center border-b border-border px-4">
-                  <TabsList className="grid h-full w-full grid-cols-5 bg-transparent p-0">
-                    <TabsTrigger
-                      value="info"
-                      className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
-                    >
-                      Info
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="experience"
-                      className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
-                    >
-                      Experience
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="projects"
-                      className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
-                    >
-                      Projects
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="education"
-                      className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
-                    >
-                      Education
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="skills"
-                      className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
-                    >
-                      Skills
-                    </TabsTrigger>
-                  </TabsList>
-                </div>
+          )}
+        </header>
 
-                <ScrollArea className="flex-1">
-                  <div className="p-6">
-                    {isLoading ? (
-                      <p className="text-sm text-muted-foreground">
-                        Loading resume data...
-                      </p>
-                    ) : (
-                      <>
-                        <TabsContent value="info" className="m-0">
-                          <MetadataEditor
-                            metadata={resumeData.metadata}
-                            contactOrder={layoutPreferences.contactOrder}
-                            onChange={(metadata) =>
-                              setResumeData({ ...resumeData, metadata })
-                            }
-                            onContactOrderChange={(contactOrder) =>
-                              setResumeData({
-                                ...resumeData,
-                                layoutPreferences: {
-                                  ...layoutPreferences,
-                                  contactOrder,
-                                },
-                              })
-                            }
-                          />
-                        </TabsContent>
-
-                        <TabsContent value="experience" className="m-0">
-                          <ExperienceEditor
-                            experience={resumeData.experience}
-                            order={layoutPreferences.experienceOrder}
-                            onOrderChange={(experienceOrder) =>
-                              setResumeData({
-                                ...resumeData,
-                                layoutPreferences: {
-                                  ...layoutPreferences,
-                                  experienceOrder,
-                                },
-                              })
-                            }
-                            onChange={(experience) =>
-                              setResumeData({ ...resumeData, experience })
-                            }
-                          />
-                        </TabsContent>
-
-                        <TabsContent value="projects" className="m-0">
-                          <ProjectsEditor
-                            projects={resumeData.projects}
-                            onChange={(projects) =>
-                              setResumeData({ ...resumeData, projects })
-                            }
-                          />
-                        </TabsContent>
-
-                        <TabsContent value="education" className="m-0">
-                          <EducationEditor
-                            education={resumeData.education}
-                            order={layoutPreferences.educationOrder}
-                            onOrderChange={(educationOrder) =>
-                              setResumeData({
-                                ...resumeData,
-                                layoutPreferences: {
-                                  ...layoutPreferences,
-                                  educationOrder,
-                                },
-                              })
-                            }
-                            onChange={(education) =>
-                              setResumeData({ ...resumeData, education })
-                            }
-                          />
-                        </TabsContent>
-
-                        <TabsContent value="skills" className="m-0">
-                          <SkillsEditor
-                            skills={resumeData.skills}
-                            onChange={(skills) =>
-                              setResumeData({ ...resumeData, skills })
-                            }
-                          />
-                        </TabsContent>
-                      </>
-                    )}
-                  </div>
-                </ScrollArea>
-              </Tabs>
-            </div>
+        <div className="flex flex-1 overflow-hidden">
+          <div className="w-80 shrink-0 border-r border-border">
+            <ScrollArea className="h-full">
+              <ul className="space-y-2 p-4">
+                {settingsOptions.map((option) => {
+                  const Icon = option.icon;
+                  const isActive = option.id === activeOption;
+                  return (
+                    <li key={option.id}>
+                      <button
+                        type="button"
+                        className={cn(
+                          "w-full rounded-md border px-3 py-2 text-left transition-colors",
+                          isActive
+                            ? "border-border bg-accent"
+                            : "border-transparent hover:bg-muted"
+                        )}
+                        onClick={() => setActiveOption(option.id)}
+                      >
+                        <div className="flex items-start gap-3">
+                          <Icon className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                          <div>
+                            <p className="text-sm font-medium text-foreground">
+                              {option.label}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {option.description}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </ScrollArea>
           </div>
+
+          {activeOption === "default-resume" ? (
+            <>
+              <div className="flex-1 overflow-hidden">
+                <ResumeViewer
+                  resumeData={resumeData}
+                  onResumeUpdate={handleResumeUpdate}
+                  analysis={resumeAnalysis}
+                  onApplySuggestion={handleApplySuggestion}
+                />
+              </div>
+
+              <div className="w-[460px] shrink-0 border-l border-border">
+                <ResumeEditorPanel
+                  resumeData={resumeData}
+                  onResumeUpdate={handleResumeUpdate}
+                  onImportResume={handleImportResume}
+                  isImportingResume={isImportingResume}
+                  importError={importError}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-1 items-center justify-center p-8">
+              <div className="max-w-md rounded-lg border border-border bg-card p-6">
+                <h2 className="text-sm font-medium text-foreground">
+                  {activeOptionData?.label}
+                </h2>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  This section is available in the menu and can be expanded next.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
