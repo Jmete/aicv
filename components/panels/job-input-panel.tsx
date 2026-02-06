@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
 import type {
   AnalyzeSuggestion,
   ApplicationFormData,
@@ -30,6 +31,7 @@ interface JobInputPanelProps {
   analyzeSuggestions: AnalyzeSuggestion[];
   onAcceptAnalyzeSuggestion: (suggestionId: string) => void;
   onRejectAnalyzeSuggestion: (suggestionId: string) => void;
+  onResetAnalyzeSuggestion: (suggestionId: string) => void;
   onApplyAllAnalyzeSuggestions: () => void;
   onDiscardAnalyzeSuggestions: () => void;
   onResetResume: () => void;
@@ -82,12 +84,17 @@ export function JobInputPanel({
   analyzeSuggestions,
   onAcceptAnalyzeSuggestion,
   onRejectAnalyzeSuggestion,
+  onResetAnalyzeSuggestion,
   onApplyAllAnalyzeSuggestions,
   onDiscardAnalyzeSuggestions,
   onResetResume,
 }: JobInputPanelProps) {
   const handleTextChange = (
-    field: "companyName" | "jobTitle" | "jobUrl" | "jobDescription",
+    field:
+      | "companyName"
+      | "jobTitle"
+      | "jobUrl"
+      | "jobDescription",
     value: string
   ) => {
     onChange({ ...formData, [field]: value });
@@ -240,6 +247,26 @@ export function JobInputPanel({
             </p>
           </div>
 
+          <div className="rounded-md border border-border bg-muted/20 p-2">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-medium text-foreground">
+                  Allow deletion suggestions
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  Off by default. Deletions still require manual approval.
+                </p>
+              </div>
+              <Switch
+                checked={formData.allowDeletions}
+                onCheckedChange={(checked) =>
+                  onChange({ ...formData, allowDeletions: checked })
+                }
+                aria-label="Allow deletion suggestions"
+              />
+            </div>
+          </div>
+
           {analyzeMeta && (
             <div className="rounded-md border border-border bg-muted/30 p-2 text-[11px] text-muted-foreground">
               <p>
@@ -271,7 +298,7 @@ export function JobInputPanel({
                     className="h-6 px-2 text-[10px]"
                     onClick={onApplyAllAnalyzeSuggestions}
                   >
-                    Apply All
+                    Apply Non-Delete
                   </Button>
                   <Button
                     type="button"
@@ -339,11 +366,51 @@ export function JobInputPanel({
                                   To: {suggestion.afterText}
                                 </p>
                               ) : null}
+                              {typeof suggestion.lineDelta === "number" ||
+                              typeof suggestion.confidence === "number" ? (
+                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                  {typeof suggestion.lineDelta === "number"
+                                    ? `Line delta: ${suggestion.lineDelta >= 0 ? "+" : ""}${suggestion.lineDelta}`
+                                    : ""}
+                                  {typeof suggestion.lineDelta === "number" &&
+                                  typeof suggestion.confidence === "number"
+                                    ? " • "
+                                    : ""}
+                                  {typeof suggestion.confidence === "number"
+                                    ? `Confidence: ${Math.round(
+                                        suggestion.confidence * 100
+                                      )}%`
+                                    : ""}
+                                </p>
+                              ) : null}
+                              {suggestion.keywordsCovered &&
+                              suggestion.keywordsCovered.length > 0 ? (
+                                <p className="mt-1 text-[10px] text-muted-foreground line-clamp-1">
+                                  Keywords: {suggestion.keywordsCovered.join(", ")}
+                                </p>
+                              ) : null}
+                              {suggestion.manualApprovalRequired ? (
+                                <p className="mt-1 text-[10px] text-destructive">
+                                  Manual approval required.
+                                </p>
+                              ) : null}
                               <div className="mt-2 flex items-center justify-between">
                                 <span className="text-[10px] text-muted-foreground capitalize">
                                   {suggestion.status}
                                 </span>
                                 <div className="flex items-center gap-1">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-2 text-[10px]"
+                                    onClick={() =>
+                                      onResetAnalyzeSuggestion(suggestion.id)
+                                    }
+                                    disabled={suggestion.status === "pending"}
+                                  >
+                                    Reset
+                                  </Button>
                                   <Button
                                     type="button"
                                     variant="ghost"
@@ -364,7 +431,11 @@ export function JobInputPanel({
                                     onClick={() =>
                                       onAcceptAnalyzeSuggestion(suggestion.id)
                                     }
-                                    disabled={suggestion.status !== "pending"}
+                                    disabled={
+                                      suggestion.status !== "pending" ||
+                                      (suggestion.op === "delete" &&
+                                        !formData.allowDeletions)
+                                    }
                                   >
                                     Accept
                                   </Button>

@@ -769,6 +769,9 @@ export function ResumeViewer({
   } = resumeData;
   const [isPrintPreviewMode, setIsPrintPreviewMode] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [activeDocumentTab, setActiveDocumentTab] = useState<
+    "resume" | "cover-letter"
+  >("resume");
 
   const feedbackMap = useMemo(() => {
     if (!analysis?.fieldFeedback) {
@@ -971,7 +974,6 @@ export function ResumeViewer({
     return { groupedSkills: grouped, ungroupedSkills: ungrouped };
   }, [skills]);
 
-  const [todayFormatted, setTodayFormatted] = useState("");
   const [activeAiTarget, setActiveAiTarget] = useState<string | null>(null);
   const [selectionState, setSelectionState] = useState<{
     fields: SelectedField[];
@@ -996,6 +998,17 @@ export function ResumeViewer({
     section?: SectionKey;
   }>({ type: "selection" });
   const [isDebugOpen, setIsDebugOpen] = useState(false);
+  const [activeDebugTab, setActiveDebugTab] = useState<
+    "resume-json" | "llm-raw"
+  >("resume-json");
+  const [didCopyDebugJson, setDidCopyDebugJson] = useState(false);
+  const resumeDebugJson = useMemo(() => {
+    try {
+      return JSON.stringify(resumeData, null, 2);
+    } catch {
+      return "";
+    }
+  }, [resumeData]);
   const rawDebugJson = useMemo(() => {
     const source = debugData ?? analysis?.raw;
     if (!source) return "";
@@ -1005,26 +1018,17 @@ export function ResumeViewer({
       return String(source);
     }
   }, [analysis, debugData]);
-  const hasDebugData = rawDebugJson.length > 0;
+  const activeDebugJson =
+    activeDebugTab === "resume-json" ? resumeDebugJson : rawDebugJson;
   const resumeContentRef = useRef<HTMLDivElement>(null);
   const resumePaginationRecalculateRef = useRef<(() => void) | null>(null);
+  const coverLetterPaginationRecalculateRef = useRef<(() => void) | null>(null);
   const charMeasureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const bulkPanelTop = isDebugOpen ? 120 : 60;
 
   useEffect(() => {
-    setTodayFormatted(
-      new Date().toLocaleDateString("en-US", {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      })
-    );
-  }, []);
-
-  useEffect(() => {
     if (!isPrintPreviewMode) return;
     setIsBulkOpen(false);
-    setIsDebugOpen(false);
     setSelectionState(null);
     setHyperlinkSelection(null);
     setIsHyperlinkPanelOpen(false);
@@ -1032,6 +1036,38 @@ export function ResumeViewer({
     setHyperlinkError(null);
     setActiveAiTarget(null);
   }, [isPrintPreviewMode]);
+
+  useEffect(() => {
+    if (!didCopyDebugJson) return;
+    const timeoutId = window.setTimeout(() => {
+      setDidCopyDebugJson(false);
+    }, 1200);
+    return () => window.clearTimeout(timeoutId);
+  }, [didCopyDebugJson]);
+
+  const copyDebugJson = useCallback(async () => {
+    if (!activeDebugJson) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(activeDebugJson);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = activeDebugJson;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setDidCopyDebugJson(true);
+    } catch (error) {
+      console.error("Failed to copy debug JSON:", error);
+      setDidCopyDebugJson(false);
+    }
+  }, [activeDebugJson]);
 
   const exportResumeAsPdf = useCallback(async () => {
     if (typeof window === "undefined") return;
@@ -3411,6 +3447,18 @@ export function ResumeViewer({
     margins: resolvedPageSettings.coverLetterMargins,
     elementGap: 24, // space-y-6 = 1.5rem = 24px
   });
+  coverLetterPaginationRecalculateRef.current = coverLetterPagination.recalculate;
+
+  useEffect(() => {
+    const raf = window.requestAnimationFrame(() => {
+      if (activeDocumentTab === "resume") {
+        resumePaginationRecalculateRef.current?.();
+      } else {
+        coverLetterPaginationRecalculateRef.current?.();
+      }
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [activeDocumentTab, resumeData]);
 
   const setResumeContainerRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -3785,7 +3833,7 @@ export function ResumeViewer({
             <EditableText
               value={coverLetter.date}
               onChange={(date) => updateCoverLetter({ date })}
-              placeholder={todayFormatted || "Month Day, Year"}
+              placeholder="YYYY-MM-DD"
             />
           </p>
         </div>
@@ -3868,7 +3916,6 @@ export function ResumeViewer({
   }, [
     metadata,
     coverLetter,
-    todayFormatted,
     coverLetterFontSizeStyles,
     updateContactInfo,
     updateCoverLetter,
@@ -4343,11 +4390,20 @@ export function ResumeViewer({
           )}
         </div>
       )}
-      {isDebugOpen && !isPrintPreviewMode && (
+      {isDebugOpen && (
         <div className="absolute right-4 top-[60px] z-40 w-[360px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-medium">LLM Raw Output</p>
+            <p className="text-xs font-medium">Debug</p>
             <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={copyDebugJson}
+                disabled={!activeDebugJson}
+              >
+                {didCopyDebugJson ? "Copied" : "Copy JSON"}
+              </Button>
               {onApplyDebugChanges ? (
                 <Button
                   variant="secondary"
@@ -4368,12 +4424,42 @@ export function ResumeViewer({
               </Button>
             </div>
           </div>
-          <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-[10px] text-muted-foreground">
-            {rawDebugJson || "No analysis yet."}
-          </pre>
+          <Tabs
+            value={activeDebugTab}
+            onValueChange={(value) => {
+              setActiveDebugTab(value as "resume-json" | "llm-raw");
+              setDidCopyDebugJson(false);
+            }}
+            className="mt-2"
+          >
+            <TabsList className="h-8 w-full justify-start gap-1">
+              <TabsTrigger value="resume-json" className="h-6 px-2 text-[10px]">
+                Resume JSON
+              </TabsTrigger>
+              <TabsTrigger value="llm-raw" className="h-6 px-2 text-[10px]">
+                LLM Raw Output
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="resume-json" className="mt-2">
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap text-[10px] text-muted-foreground">
+                {resumeDebugJson || "No resume data."}
+              </pre>
+            </TabsContent>
+            <TabsContent value="llm-raw" className="mt-2">
+              <pre className="max-h-80 overflow-auto whitespace-pre-wrap text-[10px] text-muted-foreground">
+                {rawDebugJson || "No analysis yet."}
+              </pre>
+            </TabsContent>
+          </Tabs>
         </div>
       )}
-      <Tabs defaultValue="resume" className="flex h-full flex-col">
+      <Tabs
+        value={activeDocumentTab}
+        onValueChange={(value) =>
+          setActiveDocumentTab(value as "resume" | "cover-letter")
+        }
+        className="flex h-full flex-col"
+      >
         <div className="flex h-[52px] items-center border-b border-border px-4">
           <TabsList className="h-12 flex-1 justify-start gap-4 bg-transparent p-0">
             <TabsTrigger
@@ -4452,17 +4538,22 @@ export function ResumeViewer({
               )}
               {isPrintPreviewMode ? "Exit Preview" : "Print Preview"}
             </Button>
-            {!isPrintPreviewMode && (
-              <Button
+            <Button
               variant="ghost"
               size="sm"
               className="h-7 px-2 text-[11px]"
-              onClick={() => setIsDebugOpen((current) => !current)}
-              disabled={!hasDebugData}
+              onClick={() => {
+                setIsDebugOpen((current) => {
+                  const next = !current;
+                  if (next) {
+                    setActiveDebugTab("resume-json");
+                  }
+                  return next;
+                });
+              }}
             >
               {isDebugOpen ? "Hide Debug" : "Debug"}
-              </Button>
-            )}
+            </Button>
           </div>
         </div>
 

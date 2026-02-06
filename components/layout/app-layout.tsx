@@ -19,6 +19,7 @@ export interface ApplicationFormData {
   jobUrl: string;
   jobDescription: string;
   maxResumePages: number;
+  allowDeletions: boolean;
 }
 
 const initialFormData: ApplicationFormData = {
@@ -27,6 +28,7 @@ const initialFormData: ApplicationFormData = {
   jobUrl: "",
   jobDescription: "",
   maxResumePages: 1,
+  allowDeletions: false,
 };
 
 interface AnalyzeMeta {
@@ -45,11 +47,30 @@ export interface AnalyzeSuggestion {
   status: AnalyzeSuggestionStatus;
   op: AnalyzeSuggestionOp;
   path: string;
+  patchPath?: string;
   label: string;
   beforeText?: string;
   afterText?: string;
   value?: unknown;
   insertIndex?: number;
+  keywordsCovered?: string[];
+  lineDelta?: number;
+  confidence?: number;
+  evidenceLevel?: "explicit" | "conservative_rephrase";
+  manualApprovalRequired?: boolean;
+}
+
+interface TuneDiff {
+  op: "replace" | "insert" | "delete";
+  path: string;
+  patchPath: string;
+  before: string | null;
+  after: string | null;
+  keywordsCovered: string[];
+  lineDelta: number;
+  confidence: number;
+  evidenceLevel: "explicit" | "conservative_rephrase";
+  manualApprovalRequired: boolean;
 }
 
 const createId = () =>
@@ -59,6 +80,54 @@ const createId = () =>
 
 const normalizeComparable = (value: string) =>
   value.replace(/\s+/g, " ").trim();
+
+const hasText = (value: string | undefined | null) =>
+  typeof value === "string" && normalizeComparable(value).length > 0;
+
+const withProjectTitleGuardrails = (
+  baseResume: ResumeData,
+  nextResume: ResumeData
+): ResumeData => {
+  const baseById = new Map(baseResume.projects.map((project) => [project.id, project]));
+  const projects = nextResume.projects.map((project, index) => {
+    const byId = baseById.get(project.id);
+    const byIndex = baseResume.projects[index];
+    const fallbackName = byId?.name ?? byIndex?.name ?? "";
+    const fallbackId = byId?.id ?? byIndex?.id ?? project.id;
+    return {
+      ...project,
+      id: hasText(project.id) ? project.id : fallbackId,
+      name: hasText(project.name) ? project.name : fallbackName,
+    };
+  });
+  return { ...nextResume, projects };
+};
+
+const ensureUniqueIds = <T extends { id: string }>(items: T[]): T[] => {
+  const seen = new Set<string>();
+  return items.map((item) => {
+    let id = hasText(item.id) ? item.id : createId();
+    while (seen.has(id)) id = createId();
+    seen.add(id);
+    return id === item.id ? item : { ...item, id };
+  });
+};
+
+const withResumeIntegrityGuardrails = (
+  nextResume: ResumeData,
+  baseResume?: ResumeData
+): ResumeData => {
+  const seeded = baseResume
+    ? withProjectTitleGuardrails(baseResume, nextResume)
+    : nextResume;
+  return {
+    ...seeded,
+    experience: ensureUniqueIds(seeded.experience),
+    projects: ensureUniqueIds(seeded.projects),
+    education: ensureUniqueIds(seeded.education),
+    skills: ensureUniqueIds(seeded.skills),
+  };
+};
 
 const buildBulletSuggestions = (
   baseBullets: string[],
@@ -287,6 +356,38 @@ const buildAnalyzeSuggestions = (
   return suggestions;
 };
 
+const attachTuneDiffMeta = (
+  suggestions: AnalyzeSuggestion[],
+  diffs: TuneDiff[]
+) => {
+  const buckets = new Map<string, TuneDiff[]>();
+  for (const diff of diffs) {
+    const key = `${diff.op}:${diff.path}`;
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.push(diff);
+    } else {
+      buckets.set(key, [diff]);
+    }
+  }
+
+  return suggestions.map((suggestion) => {
+    const key = `${suggestion.op}:${suggestion.path}`;
+    const queue = buckets.get(key);
+    const match = queue?.shift();
+    if (!match) return suggestion;
+    return {
+      ...suggestion,
+      patchPath: match.patchPath,
+      keywordsCovered: match.keywordsCovered,
+      lineDelta: match.lineDelta,
+      confidence: match.confidence,
+      evidenceLevel: match.evidenceLevel,
+      manualApprovalRequired: match.manualApprovalRequired,
+    };
+  });
+};
+
 const getAtPath = (source: unknown, path: string) => {
   const segments = parseFieldPath(path);
   let cursor: any = source;
@@ -391,8 +492,7 @@ export function AppLayout() {
   const [analyzeBaseResume, setAnalyzeBaseResume] = useState<ResumeData | null>(
     null
   );
-  const [analyzeOptimizedResume, setAnalyzeOptimizedResume] =
-    useState<ResumeData | null>(null);
+  const [, setAnalyzeOptimizedResume] = useState<ResumeData | null>(null);
   const [analyzeDebugRaw, setAnalyzeDebugRaw] = useState<unknown>(null);
   const [pageCounts, setPageCounts] = useState({
     resumePages: 0,
@@ -420,7 +520,7 @@ export function AppLayout() {
   }, [defaultResumeData]);
 
   const handleResumeUpdate = useCallback((data: ResumeData) => {
-    setResumeData(data);
+    setResumeData(withResumeIntegrityGuardrails(data));
   }, []);
 
   useEffect(() => {
@@ -456,12 +556,15 @@ export function AppLayout() {
     setAnalyzeDebugRaw(null);
 
     try {
-      const baseResumeForAnalyze = structuredClone(defaultResumeData);
-      const response = await fetch("/api/analyze", {
+      const baseResumeForAnalyze = structuredClone(
+        withResumeIntegrityGuardrails(resumeData)
+      );
+      const response = await fetch("/api/tune-resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...formData,
+          allowedAdditions: [],
           resumeData: baseResumeForAnalyze,
         }),
       });
@@ -472,25 +575,34 @@ export function AppLayout() {
         try {
           payload = JSON.parse(rawText);
         } catch {
-          throw new Error("Analyze failed. Server returned invalid JSON.");
+          throw new Error("Tune failed. Server returned invalid JSON.");
         }
       }
 
       if (!response.ok) {
-        throw new Error(payload?.error || "Failed to analyze job description.");
+        throw new Error(payload?.error || "Failed to tune resume.");
       }
 
       setAnalyzeDebugRaw(payload?.raw ?? payload ?? null);
 
       if (payload?.optimizedResume) {
-        const optimized = payload.optimizedResume as ResumeData;
+        const optimized = withResumeIntegrityGuardrails(
+          payload.optimizedResume as ResumeData,
+          baseResumeForAnalyze
+        );
         const suggestions = buildAnalyzeSuggestions(
           baseResumeForAnalyze,
           optimized
         );
+        const tunedSuggestions = Array.isArray(payload?.diffs)
+          ? attachTuneDiffMeta(suggestions, payload.diffs as TuneDiff[])
+          : suggestions;
+        const filteredSuggestions = formData.allowDeletions
+          ? tunedSuggestions
+          : tunedSuggestions.filter((suggestion) => suggestion.op !== "delete");
         setAnalyzeBaseResume(baseResumeForAnalyze);
         setAnalyzeOptimizedResume(optimized);
-        setAnalyzeSuggestions(suggestions);
+        setAnalyzeSuggestions(filteredSuggestions);
         setResumeData(baseResumeForAnalyze);
         setResumeAnalysis(null);
       }
@@ -510,9 +622,9 @@ export function AppLayout() {
       });
       setAnalyzeError(payload?.fitError ?? null);
     } catch (error) {
-      console.error("Error analyzing job description:", error);
+      console.error("Error tuning resume:", error);
       setAnalyzeError(
-        error instanceof Error ? error.message : "Failed to analyze."
+        error instanceof Error ? error.message : "Failed to tune."
       );
       setAnalyzeMeta(null);
       setAnalyzeSuggestions([]);
@@ -522,7 +634,7 @@ export function AppLayout() {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [defaultResumeData, formData]);
+  }, [formData, resumeData]);
 
   const handleImportResume = useCallback(async (file: File) => {
     setIsImportingResume(true);
@@ -607,7 +719,7 @@ export function AppLayout() {
       const base = baseOverride ?? analyzeBaseResume;
       if (!base) return;
       const nextResume = applyAcceptedSuggestions(base, nextSuggestions);
-      setResumeData(nextResume);
+      setResumeData(withResumeIntegrityGuardrails(nextResume, base));
     },
     [analyzeBaseResume]
   );
@@ -617,14 +729,16 @@ export function AppLayout() {
       setAnalyzeSuggestions((current) => {
         const nextSuggestions = current.map((suggestion) =>
           suggestion.id === suggestionId
-            ? { ...suggestion, status: "accepted" as const }
+            ? suggestion.op === "delete" && !formData.allowDeletions
+              ? suggestion
+              : { ...suggestion, status: "accepted" as const }
             : suggestion
         );
         syncResumeFromAnalyzeSuggestions(nextSuggestions);
         return nextSuggestions;
       });
     },
-    [syncResumeFromAnalyzeSuggestions]
+    [formData.allowDeletions, syncResumeFromAnalyzeSuggestions]
   );
 
   const handleRejectAnalyzeSuggestion = useCallback(
@@ -642,27 +756,35 @@ export function AppLayout() {
     [syncResumeFromAnalyzeSuggestions]
   );
 
+  const handleResetAnalyzeSuggestion = useCallback(
+    (suggestionId: string) => {
+      setAnalyzeSuggestions((current) => {
+        const nextSuggestions = current.map((suggestion) =>
+          suggestion.id === suggestionId
+            ? { ...suggestion, status: "pending" as const }
+            : suggestion
+        );
+        syncResumeFromAnalyzeSuggestions(nextSuggestions);
+        return nextSuggestions;
+      });
+    },
+    [syncResumeFromAnalyzeSuggestions]
+  );
+
   const handleApplyAllAnalyzeSuggestions = useCallback(() => {
-    if (analyzeOptimizedResume) {
-      setResumeData(analyzeOptimizedResume);
-    } else if (analyzeBaseResume) {
-      setResumeData(
-        applyAcceptedSuggestions(
-          analyzeBaseResume,
-          analyzeSuggestions.map((suggestion) => ({
-            ...suggestion,
-            status: "accepted" as const,
-          }))
-        )
-      );
-    }
-    setAnalyzeSuggestions((current) =>
-      current.map((suggestion) => ({
-        ...suggestion,
-        status: "accepted",
-      }))
-    );
-  }, [analyzeBaseResume, analyzeOptimizedResume, analyzeSuggestions]);
+    if (!analyzeBaseResume) return;
+    setAnalyzeSuggestions((current) => {
+      const nextSuggestions = current.map((suggestion) => {
+        if (suggestion.status !== "pending") return suggestion;
+        if (suggestion.op === "delete" || suggestion.manualApprovalRequired) {
+          return suggestion;
+        }
+        return { ...suggestion, status: "accepted" as const };
+      });
+      syncResumeFromAnalyzeSuggestions(nextSuggestions, analyzeBaseResume);
+      return nextSuggestions;
+    });
+  }, [analyzeBaseResume, syncResumeFromAnalyzeSuggestions]);
 
   const handleDiscardAnalyzeSuggestions = useCallback(() => {
     setAnalyzeSuggestions([]);
@@ -739,6 +861,7 @@ export function AppLayout() {
             analyzeSuggestions={analyzeSuggestions}
             onAcceptAnalyzeSuggestion={handleAcceptAnalyzeSuggestion}
             onRejectAnalyzeSuggestion={handleRejectAnalyzeSuggestion}
+            onResetAnalyzeSuggestion={handleResetAnalyzeSuggestion}
             onApplyAllAnalyzeSuggestions={handleApplyAllAnalyzeSuggestions}
             onDiscardAnalyzeSuggestions={handleDiscardAnalyzeSuggestions}
             onResetResume={handleResetResume}
