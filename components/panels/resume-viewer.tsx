@@ -129,6 +129,13 @@ interface ResumeViewerProps {
   }) => void;
   debugData?: unknown;
   onApplyDebugChanges?: () => void;
+  readOnly?: boolean;
+  allowCoverLetterTabInReadOnly?: boolean;
+  autoScaleToFit?: boolean;
+  documentTab?: "resume" | "cover-letter";
+  onDocumentTabChange?: (tab: "resume" | "cover-letter") => void;
+  highlightFieldPaths?: string[];
+  highlightTone?: "before" | "after";
 }
 
 interface EditableTextProps {
@@ -148,15 +155,40 @@ const normalizeText = (value: string, multiline: boolean) => {
 
 type HyperlinkContextValue = {
   isPrintPreviewMode: boolean;
+  isReadOnly: boolean;
+  highlightPaths: Set<string>;
+  highlightTone: "before" | "after";
   hyperlinksByPath: Map<string, TextHyperlink[]>;
   hyperlinkUnderlineEnabled: boolean;
 };
 
 const HyperlinkContext = createContext<HyperlinkContextValue>({
   isPrintPreviewMode: false,
+  isReadOnly: false,
+  highlightPaths: new Set(),
+  highlightTone: "after",
   hyperlinksByPath: new Map(),
   hyperlinkUnderlineEnabled: true,
 });
+
+const isFieldPathHighlighted = (
+  fieldPath: string | undefined,
+  highlightPaths: Set<string>
+) => {
+  if (!fieldPath || highlightPaths.size === 0) return false;
+
+  for (const path of highlightPaths) {
+    if (!path) continue;
+    if (fieldPath === path) return true;
+    if (fieldPath.startsWith(`${path}.`) || fieldPath.startsWith(`${path}[`)) {
+      return true;
+    }
+    if (path.startsWith(`${fieldPath}.`) || path.startsWith(`${fieldPath}[`)) {
+      return true;
+    }
+  }
+  return false;
+};
 
 const normalizeHyperlinkUrl = (value: string): string | null => {
   const trimmed = value.trim();
@@ -212,7 +244,14 @@ function EditableText({
   multiline = false,
   fieldPath,
 }: EditableTextProps) {
-  const { isPrintPreviewMode, hyperlinksByPath, hyperlinkUnderlineEnabled } =
+  const {
+    isPrintPreviewMode,
+    isReadOnly,
+    highlightPaths,
+    highlightTone,
+    hyperlinksByPath,
+    hyperlinkUnderlineEnabled,
+  } =
     useContext(HyperlinkContext);
   const ref = useRef<HTMLSpanElement>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -221,6 +260,15 @@ function EditableText({
     if (!fieldPath) return [] as TextHyperlink[];
     return hyperlinksByPath.get(fieldPath) ?? [];
   }, [fieldPath, hyperlinksByPath]);
+  const isHighlighted = useMemo(
+    () => isFieldPathHighlighted(fieldPath, highlightPaths),
+    [fieldPath, highlightPaths]
+  );
+  const highlightClass = isHighlighted
+    ? highlightTone === "before"
+      ? "rounded-[2px] bg-amber-200/45 ring-1 ring-amber-400/70 dark:bg-amber-500/20 dark:ring-amber-400/50"
+      : "rounded-[2px] bg-emerald-200/45 ring-1 ring-emerald-400/70 dark:bg-emerald-500/20 dark:ring-emerald-400/50"
+    : "";
 
   const linkedSegments = useMemo(() => {
     if (fieldHyperlinks.length === 0) {
@@ -311,6 +359,7 @@ function EditableText({
           multiline
             ? "block whitespace-pre-line break-words"
             : "inline-block max-w-full break-words align-baseline",
+          highlightClass,
           className
         )}
         style={style}
@@ -318,13 +367,13 @@ function EditableText({
         data-placeholder={placeholder}
         role="textbox"
         aria-label={placeholder || "Editable text"}
-        tabIndex={isPrintPreviewMode ? -1 : 0}
+        tabIndex={isPrintPreviewMode || isReadOnly ? -1 : 0}
         onDoubleClick={() => {
-          if (isPrintPreviewMode) return;
+          if (isPrintPreviewMode || isReadOnly) return;
           setIsEditing(true);
         }}
         onKeyDown={(event) => {
-          if (isPrintPreviewMode) return;
+          if (isPrintPreviewMode || isReadOnly) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             setIsEditing(true);
@@ -369,31 +418,32 @@ function EditableText({
         multiline
           ? "block whitespace-pre-line break-words"
           : "inline-block max-w-full break-words align-baseline",
+        highlightClass,
         className
       )}
       style={style}
-      contentEditable={!isPrintPreviewMode}
+      contentEditable={!isPrintPreviewMode && !isReadOnly}
       suppressContentEditableWarning
       data-field-path={fieldPath}
       data-placeholder={placeholder}
-      onInput={isPrintPreviewMode ? undefined : commit}
+      onInput={isPrintPreviewMode || isReadOnly ? undefined : commit}
       onBlur={() => {
         setIsEditing(false);
-        if (!isPrintPreviewMode) {
+        if (!isPrintPreviewMode && !isReadOnly) {
           commit();
         }
       }}
       onFocus={() => {
-        if (!isPrintPreviewMode) {
+        if (!isPrintPreviewMode && !isReadOnly) {
           setIsEditing(true);
         }
       }}
       onKeyDown={handleKeyDown}
-      onPaste={isPrintPreviewMode ? undefined : handlePaste}
+      onPaste={isPrintPreviewMode || isReadOnly ? undefined : handlePaste}
       role="textbox"
       aria-label={placeholder || "Editable text"}
-      tabIndex={isPrintPreviewMode ? -1 : 0}
-      spellCheck={!isPrintPreviewMode}
+      tabIndex={isPrintPreviewMode || isReadOnly ? -1 : 0}
+      spellCheck={!isPrintPreviewMode && !isReadOnly}
     />
   );
 }
@@ -755,6 +805,13 @@ export function ResumeViewer({
   onPageCountChange,
   debugData,
   onApplyDebugChanges,
+  readOnly = false,
+  allowCoverLetterTabInReadOnly = false,
+  autoScaleToFit = false,
+  documentTab,
+  onDocumentTabChange,
+  highlightFieldPaths,
+  highlightTone = "after",
 }: ResumeViewerProps) {
   const {
     pageSettings,
@@ -767,11 +824,29 @@ export function ResumeViewer({
     education,
     skills,
   } = resumeData;
-  const [isPrintPreviewMode, setIsPrintPreviewMode] = useState(false);
+  const [isPrintPreviewMode, setIsPrintPreviewMode] = useState(
+    Boolean(readOnly)
+  );
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [activeDocumentTab, setActiveDocumentTab] = useState<
     "resume" | "cover-letter"
   >("resume");
+  const resolvedDocumentTab = documentTab ?? activeDocumentTab;
+  const isDocumentTabControlled = typeof documentTab !== "undefined";
+  const highlightPathSet = useMemo(
+    () => new Set((highlightFieldPaths ?? []).filter(Boolean)),
+    [highlightFieldPaths]
+  );
+
+  const canShowCoverLetterTab = !readOnly || allowCoverLetterTabInReadOnly;
+
+  useEffect(() => {
+    if (!readOnly) return;
+    setIsPrintPreviewMode(true);
+    if (!allowCoverLetterTabInReadOnly && !isDocumentTabControlled) {
+      setActiveDocumentTab("resume");
+    }
+  }, [allowCoverLetterTabInReadOnly, isDocumentTabControlled, readOnly]);
 
   const feedbackMap = useMemo(() => {
     if (!analysis?.fieldFeedback) {
@@ -906,10 +981,14 @@ export function ResumeViewer({
     [getPaperStyleFromMargins, resolvedPageSettings.coverLetterMargins]
   );
 
-  const paperMaxWidth = useMemo(() => {
-    const { width } = PAPER_DIMENSIONS[resolvedPageSettings.paperSize];
+  const paperMetrics = useMemo(() => {
+    const { width, height } = PAPER_DIMENSIONS[resolvedPageSettings.paperSize];
     const pxPerMm = 72 / 25.4;
-    return `${width * pxPerMm}px`;
+    return {
+      paperWidthPx: width * pxPerMm,
+      paperHeightPx: height * pxPerMm,
+      paperMaxWidth: `${width * pxPerMm}px`,
+    };
   }, [resolvedPageSettings.paperSize]);
 
   const hyperlinksByPath = useMemo(() => {
@@ -1021,10 +1100,40 @@ export function ResumeViewer({
   const activeDebugJson =
     activeDebugTab === "resume-json" ? resumeDebugJson : rawDebugJson;
   const resumeContentRef = useRef<HTMLDivElement>(null);
+  const resumeViewportRef = useRef<HTMLDivElement>(null);
+  const coverLetterViewportRef = useRef<HTMLDivElement>(null);
   const resumePaginationRecalculateRef = useRef<(() => void) | null>(null);
   const coverLetterPaginationRecalculateRef = useRef<(() => void) | null>(null);
   const charMeasureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [resumeViewportWidth, setResumeViewportWidth] = useState(0);
+  const [coverLetterViewportWidth, setCoverLetterViewportWidth] = useState(0);
   const bulkPanelTop = isDebugOpen ? 120 : 60;
+
+  useEffect(() => {
+    if (!autoScaleToFit) return;
+    const node = resumeViewportRef.current;
+    if (!node) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setResumeViewportWidth(width);
+    });
+    observer.observe(node);
+    setResumeViewportWidth(node.getBoundingClientRect().width);
+    return () => observer.disconnect();
+  }, [autoScaleToFit, resolvedDocumentTab]);
+
+  useEffect(() => {
+    if (!autoScaleToFit) return;
+    const node = coverLetterViewportRef.current;
+    if (!node) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setCoverLetterViewportWidth(width);
+    });
+    observer.observe(node);
+    setCoverLetterViewportWidth(node.getBoundingClientRect().width);
+    return () => observer.disconnect();
+  }, [autoScaleToFit, resolvedDocumentTab]);
 
   useEffect(() => {
     if (!isPrintPreviewMode) return;
@@ -3451,14 +3560,14 @@ export function ResumeViewer({
 
   useEffect(() => {
     const raf = window.requestAnimationFrame(() => {
-      if (activeDocumentTab === "resume") {
+      if (resolvedDocumentTab === "resume") {
         resumePaginationRecalculateRef.current?.();
       } else {
         coverLetterPaginationRecalculateRef.current?.();
       }
     });
     return () => window.cancelAnimationFrame(raf);
-  }, [activeDocumentTab, resumeData]);
+  }, [resolvedDocumentTab, resumeData]);
 
   const setResumeContainerRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -3962,14 +4071,12 @@ export function ResumeViewer({
     return map;
   }, [coverLetterPagination.pages, coverLetterElementDefs]);
 
-  // Calculate paper height in pixels for page containers
-  const getPageHeightStyle = (pageDimensions: { pageHeightPx: number } | null) => {
-    if (!pageDimensions) {
-      const { width, height } = PAPER_DIMENSIONS[resolvedPageSettings.paperSize];
-      return { aspectRatio: `${width} / ${height}` };
-    }
-    return { height: `${pageDimensions.pageHeightPx}px` };
-  };
+  const getPageHeightPx = useCallback(
+    (pageDimensions: { pageHeightPx: number } | null) => {
+      return pageDimensions?.pageHeightPx ?? paperMetrics.paperHeightPx;
+    },
+    [paperMetrics.paperHeightPx]
+  );
 
   // Get unique page indices (ensure at least page 0 exists)
   const resumePageIndices = useMemo(() => {
@@ -3990,6 +4097,24 @@ export function ResumeViewer({
 
   const resumePageCount = resumePageIndices.length;
   const coverLetterPageCount = coverLetterPageIndices.length;
+  const resumePageHeightPx = getPageHeightPx(resumePagination.pageDimensions);
+  const coverLetterPageHeightPx = getPageHeightPx(
+    coverLetterPagination.pageDimensions
+  );
+  const resumeScale = useMemo(() => {
+    if (!autoScaleToFit) return 1;
+    if (resumeViewportWidth <= 0) return 1;
+    return Math.min(1, resumeViewportWidth / paperMetrics.paperWidthPx);
+  }, [autoScaleToFit, paperMetrics.paperWidthPx, resumeViewportWidth]);
+  const coverLetterScale = useMemo(() => {
+    if (!autoScaleToFit) return 1;
+    if (coverLetterViewportWidth <= 0) return 1;
+    return Math.min(1, coverLetterViewportWidth / paperMetrics.paperWidthPx);
+  }, [autoScaleToFit, coverLetterViewportWidth, paperMetrics.paperWidthPx]);
+  const scaledResumeGapPx = autoScaleToFit ? Math.max(10, 32 * resumeScale) : 32;
+  const scaledCoverLetterGapPx = autoScaleToFit
+    ? Math.max(10, 32 * coverLetterScale)
+    : 32;
   const resumePageOverflow = Boolean(
     maxResumePages && resumePageCount > maxResumePages
   );
@@ -4067,6 +4192,9 @@ export function ResumeViewer({
     <HyperlinkContext.Provider
       value={{
         isPrintPreviewMode,
+        isReadOnly: readOnly,
+        highlightPaths: highlightPathSet,
+        highlightTone,
         hyperlinksByPath,
         hyperlinkUnderlineEnabled: resolvedLayoutPreferences.hyperlinkUnderline,
       }}
@@ -4454,10 +4582,15 @@ export function ResumeViewer({
         </div>
       )}
       <Tabs
-        value={activeDocumentTab}
-        onValueChange={(value) =>
-          setActiveDocumentTab(value as "resume" | "cover-letter")
-        }
+        value={resolvedDocumentTab}
+        onValueChange={(value) => {
+          if (readOnly && !allowCoverLetterTabInReadOnly) return;
+          const nextTab = value as "resume" | "cover-letter";
+          if (!isDocumentTabControlled) {
+            setActiveDocumentTab(nextTab);
+          }
+          onDocumentTabChange?.(nextTab);
+        }}
         className="flex h-full flex-col"
       >
         <div className="flex h-[52px] items-center border-b border-border px-4">
@@ -4468,93 +4601,97 @@ export function ResumeViewer({
             >
               Resume
             </TabsTrigger>
-            <TabsTrigger
-              value="cover-letter"
-              className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none px-0 pb-3 pt-3"
-            >
-              Cover Letter
-            </TabsTrigger>
+            {canShowCoverLetterTab ? (
+              <TabsTrigger
+                value="cover-letter"
+                className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none px-0 pb-3 pt-3"
+              >
+                Cover Letter
+              </TabsTrigger>
+            ) : null}
           </TabsList>
-          <div className="flex items-center gap-2">
-            {maxResumePages && isPrintPreviewMode ? (
-              <div
-                className={cn(
-                  "rounded border px-2 py-1 text-[10px]",
-                  resumePageOverflow
-                    ? "border-destructive/50 bg-destructive/10 text-destructive"
-                    : "border-border bg-muted/30 text-muted-foreground"
-                )}
+          {!readOnly ? (
+            <div className="flex items-center gap-2">
+              {maxResumePages && isPrintPreviewMode ? (
+                <div
+                  className={cn(
+                    "rounded border px-2 py-1 text-[10px]",
+                    resumePageOverflow
+                      ? "border-destructive/50 bg-destructive/10 text-destructive"
+                      : "border-border bg-muted/30 text-muted-foreground"
+                  )}
+                >
+                  Resume {resumePageCount}/{maxResumePages}
+                </div>
+              ) : null}
+              {maxResumePages && isPrintPreviewMode ? (
+                <div
+                  className={cn(
+                    "rounded border px-2 py-1 text-[10px]",
+                    coverLetterPageOverflow
+                      ? "border-destructive/50 bg-destructive/10 text-destructive"
+                      : "border-border bg-muted/30 text-muted-foreground"
+                  )}
+                >
+                  Cover {coverLetterPageCount}/1
+                </div>
+              ) : null}
+              {maxResumePages && !isPrintPreviewMode ? (
+                <div className="rounded border border-border bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
+                  Enable Print Preview for export page count
+                </div>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2 text-[11px]"
+                onClick={exportResumeAsPdf}
+                disabled={isExportingPdf}
               >
-                Resume {resumePageCount}/{maxResumePages}
-              </div>
-            ) : null}
-            {maxResumePages && isPrintPreviewMode ? (
-              <div
-                className={cn(
-                  "rounded border px-2 py-1 text-[10px]",
-                  coverLetterPageOverflow
-                    ? "border-destructive/50 bg-destructive/10 text-destructive"
-                    : "border-border bg-muted/30 text-muted-foreground"
+                {isExportingPdf ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FileDown className="h-3.5 w-3.5" />
                 )}
+                {isExportingPdf ? "Preparing..." : "Export PDF"}
+              </Button>
+              <Button
+                variant={isPrintPreviewMode ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 gap-1.5 px-2 text-[11px]"
+                onClick={() => setIsPrintPreviewMode((current) => !current)}
+                aria-label={
+                  isPrintPreviewMode
+                    ? "Exit print preview mode"
+                    : "Enable print preview mode"
+                }
+                aria-pressed={isPrintPreviewMode}
               >
-                Cover {coverLetterPageCount}/1
-              </div>
-            ) : null}
-            {maxResumePages && !isPrintPreviewMode ? (
-              <div className="rounded border border-border bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
-                Enable Print Preview for export page count
-              </div>
-            ) : null}
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1.5 px-2 text-[11px]"
-              onClick={exportResumeAsPdf}
-              disabled={isExportingPdf}
-            >
-              {isExportingPdf ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <FileDown className="h-3.5 w-3.5" />
-              )}
-              {isExportingPdf ? "Preparing..." : "Export PDF"}
-            </Button>
-            <Button
-              variant={isPrintPreviewMode ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 gap-1.5 px-2 text-[11px]"
-              onClick={() => setIsPrintPreviewMode((current) => !current)}
-              aria-label={
-                isPrintPreviewMode
-                  ? "Exit print preview mode"
-                  : "Enable print preview mode"
-              }
-              aria-pressed={isPrintPreviewMode}
-            >
-              {isPrintPreviewMode ? (
-                <EyeOff className="h-3.5 w-3.5" />
-              ) : (
-                <Eye className="h-3.5 w-3.5" />
-              )}
-              {isPrintPreviewMode ? "Exit Preview" : "Print Preview"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-[11px]"
-              onClick={() => {
-                setIsDebugOpen((current) => {
-                  const next = !current;
-                  if (next) {
-                    setActiveDebugTab("resume-json");
-                  }
-                  return next;
-                });
-              }}
-            >
-              {isDebugOpen ? "Hide Debug" : "Debug"}
-            </Button>
-          </div>
+                {isPrintPreviewMode ? (
+                  <EyeOff className="h-3.5 w-3.5" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
+                {isPrintPreviewMode ? "Exit Preview" : "Print Preview"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={() => {
+                  setIsDebugOpen((current) => {
+                    const next = !current;
+                    if (next) {
+                      setActiveDebugTab("resume-json");
+                    }
+                    return next;
+                  });
+                }}
+              >
+                {isDebugOpen ? "Hide Debug" : "Debug"}
+              </Button>
+            </div>
+          ) : null}
         </div>
 
         <ScrollArea className="flex-1">
@@ -4562,104 +4699,184 @@ export function ResumeViewer({
             <TabsContent
               value="resume"
               className="mt-0 w-full"
-              style={{ maxWidth: paperMaxWidth }}
+              style={{ maxWidth: paperMetrics.paperMaxWidth }}
             >
-              <div
-                ref={setResumeContainerRef}
-                className="resume-pages flex flex-col gap-8"
-                onMouseUp={collectSelectedFields}
-                onKeyUp={collectSelectedFields}
-              >
-                {resumePageIndices.map((pageIndex) => (
+              <div ref={resumeViewportRef} className="w-full">
+                <div
+                  className="mx-auto"
+                  style={
+                    autoScaleToFit
+                      ? { width: `${paperMetrics.paperWidthPx * resumeScale}px` }
+                      : undefined
+                  }
+                >
                   <div
-                    key={pageIndex}
-                  className="document-paper rounded-sm overflow-visible"
-                  style={{
-                      ...resumePaperStyle,
-                      ...getPageHeightStyle(resumePagination.pageDimensions),
-                      ...resumeTypographyStyle,
+                    ref={setResumeContainerRef}
+                    className="resume-pages flex flex-col"
+                    style={{
+                      width: autoScaleToFit
+                        ? `${paperMetrics.paperWidthPx}px`
+                        : undefined,
+                      gap: `${scaledResumeGapPx}px`,
                     }}
+                    onMouseUp={collectSelectedFields}
+                    onKeyUp={collectSelectedFields}
                   >
-                    <div className="flex flex-col">
-                      {(() => {
-                        const pageElements = resumeElements.filter(
-                          (el) => resumeElementPages.get(el.id) === pageIndex
-                        );
-                        return pageElements.map((element, index) => (
-                          (() => {
-                            const previousElement = pageElements[index - 1];
-                            const isExperienceEntry = element.id.startsWith("experience-");
-                            const isProjectEntry = element.id.startsWith("project-");
-                            const isEducationEntry = element.id.startsWith("education-");
-                            const hasSameSectionEntryBefore =
-                              (isExperienceEntry &&
-                                previousElement?.id.startsWith("experience-")) ||
-                              (isProjectEntry &&
-                                previousElement?.id.startsWith("project-")) ||
-                              (isEducationEntry &&
-                                previousElement?.id.startsWith("education-"));
-                            const gapClass =
-                              index === 0
-                                ? ""
-                                : element.isHeader
-                                  ? "mt-2"
-                                  : hasSameSectionEntryBefore
-                                    ? "mt-1.5"
-                                    : "mt-1";
+                    {resumePageIndices.map((pageIndex) => (
+                      <div
+                        key={pageIndex}
+                        className={cn(autoScaleToFit && "mx-auto")}
+                        style={
+                          autoScaleToFit
+                            ? {
+                                width: `${paperMetrics.paperWidthPx * resumeScale}px`,
+                                height: `${resumePageHeightPx * resumeScale}px`,
+                              }
+                            : undefined
+                        }
+                      >
+                        <div
+                          className="document-paper rounded-sm overflow-visible"
+                          style={{
+                            ...resumePaperStyle,
+                            ...resumeTypographyStyle,
+                            width: autoScaleToFit
+                              ? `${paperMetrics.paperWidthPx}px`
+                              : undefined,
+                            height: `${resumePageHeightPx}px`,
+                            transform: autoScaleToFit
+                              ? `scale(${resumeScale})`
+                              : undefined,
+                            transformOrigin: autoScaleToFit
+                              ? "top left"
+                              : undefined,
+                          }}
+                        >
+                          <div className="flex flex-col">
+                            {(() => {
+                              const pageElements = resumeElements.filter(
+                                (el) => resumeElementPages.get(el.id) === pageIndex
+                              );
+                              return pageElements.map((element, index) => (
+                                (() => {
+                                  const previousElement = pageElements[index - 1];
+                                  const isExperienceEntry = element.id.startsWith("experience-");
+                                  const isProjectEntry = element.id.startsWith("project-");
+                                  const isEducationEntry = element.id.startsWith("education-");
+                                  const hasSameSectionEntryBefore =
+                                    (isExperienceEntry &&
+                                      previousElement?.id.startsWith("experience-")) ||
+                                    (isProjectEntry &&
+                                      previousElement?.id.startsWith("project-")) ||
+                                    (isEducationEntry &&
+                                      previousElement?.id.startsWith("education-"));
+                                  const gapClass =
+                                    index === 0
+                                      ? ""
+                                      : element.isHeader
+                                        ? "mt-2"
+                                        : hasSameSectionEntryBefore
+                                          ? "mt-1.5"
+                                          : "mt-1";
 
-                            return (
-                          <div
-                            key={element.id}
-                            ref={resumeRefCallbacks.get(element.id)}
-                            className={cn(gapClass)}
-                          >
-                            {element.render()}
+                                  return (
+                                <div
+                                  key={element.id}
+                                  ref={resumeRefCallbacks.get(element.id)}
+                                  className={cn(gapClass)}
+                                >
+                                  {element.render()}
+                                </div>
+                                  );
+                                })()
+                              ));
+                            })()}
                           </div>
-                            );
-                          })()
-                        ));
-                      })()}
-                    </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
             </TabsContent>
 
-            <TabsContent
-              value="cover-letter"
-              className="mt-0 w-full"
-              style={{ maxWidth: paperMaxWidth }}
-            >
-              <div
-                ref={coverLetterPagination.containerRef}
-                className="cover-letter-pages flex flex-col gap-8"
+            {canShowCoverLetterTab ? (
+              <TabsContent
+                value="cover-letter"
+                className="mt-0 w-full"
+                style={{ maxWidth: paperMetrics.paperMaxWidth }}
               >
-                {coverLetterPageIndices.map((pageIndex) => (
+                <div ref={coverLetterViewportRef} className="w-full">
                   <div
-                    key={pageIndex}
-                  className="document-paper rounded-sm overflow-visible"
-                  style={{
-                      ...coverLetterPaperStyle,
-                      ...getPageHeightStyle(coverLetterPagination.pageDimensions),
-                      ...coverLetterTypographyStyle,
-                    }}
+                    className="mx-auto"
+                    style={
+                      autoScaleToFit
+                        ? {
+                            width: `${paperMetrics.paperWidthPx * coverLetterScale}px`,
+                          }
+                        : undefined
+                    }
                   >
-                    <div className="space-y-6">
-                      {coverLetterElements
-                        .filter((el) => coverLetterElementPages.get(el.id) === pageIndex)
-                        .map((element) => (
+                    <div
+                      ref={coverLetterPagination.containerRef}
+                      className="cover-letter-pages flex flex-col"
+                      style={{
+                        width: autoScaleToFit
+                          ? `${paperMetrics.paperWidthPx}px`
+                          : undefined,
+                        gap: `${scaledCoverLetterGapPx}px`,
+                      }}
+                    >
+                      {coverLetterPageIndices.map((pageIndex) => (
+                        <div
+                          key={pageIndex}
+                          className={cn(autoScaleToFit && "mx-auto")}
+                          style={
+                            autoScaleToFit
+                              ? {
+                                  width: `${paperMetrics.paperWidthPx * coverLetterScale}px`,
+                                  height: `${coverLetterPageHeightPx * coverLetterScale}px`,
+                                }
+                              : undefined
+                          }
+                        >
                           <div
-                            key={element.id}
-                            ref={coverLetterRefCallbacks.get(element.id)}
+                            className="document-paper rounded-sm overflow-visible"
+                            style={{
+                              ...coverLetterPaperStyle,
+                              ...coverLetterTypographyStyle,
+                              width: autoScaleToFit
+                                ? `${paperMetrics.paperWidthPx}px`
+                                : undefined,
+                              height: `${coverLetterPageHeightPx}px`,
+                              transform: autoScaleToFit
+                                ? `scale(${coverLetterScale})`
+                                : undefined,
+                              transformOrigin: autoScaleToFit
+                                ? "top left"
+                                : undefined,
+                            }}
                           >
-                            {element.render()}
+                            <div className="space-y-6">
+                              {coverLetterElements
+                                .filter((el) => coverLetterElementPages.get(el.id) === pageIndex)
+                                .map((element) => (
+                                  <div
+                                    key={element.id}
+                                    ref={coverLetterRefCallbacks.get(element.id)}
+                                  >
+                                    {element.render()}
+                                  </div>
+                                ))}
+                            </div>
                           </div>
-                        ))}
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ))}
-              </div>
-            </TabsContent>
+                </div>
+              </TabsContent>
+            ) : null}
           </div>
         </ScrollArea>
       </Tabs>

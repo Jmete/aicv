@@ -74,10 +74,11 @@ export function usePagination(
     for (const def of elementDefsRef.current) {
       const el = elementsRef.current.get(def.id);
       if (el) {
-        const rect = el.getBoundingClientRect();
+        // offsetHeight stays stable even when preview uses CSS transforms.
+        const measuredHeight = el.offsetHeight || el.getBoundingClientRect().height;
         measurements.push({
           id: def.id,
-          height: rect.height,
+          height: measuredHeight,
           isHeader: def.isHeader,
         });
       }
