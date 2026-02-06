@@ -51,6 +51,7 @@ export function usePagination(
   const containerRef = useRef<HTMLDivElement | null>(null);
   const elementsRef = useRef<Map<string, HTMLElement>>(new Map());
   const elementDefsRef = useRef<ElementDefinition[]>([]);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
   const [containerWidth, setContainerWidth] = useState(0);
   const [pages, setPages] = useState<PageAssignment[]>([
@@ -129,6 +130,25 @@ export function usePagination(
     return () => observer.disconnect();
   }, [containerWidth]);
 
+  // Observe element height changes so pagination updates when content reflows
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      scheduleRecalculate();
+    });
+    resizeObserverRef.current = observer;
+
+    for (const element of elementsRef.current.values()) {
+      observer.observe(element);
+    }
+
+    return () => {
+      observer.disconnect();
+      resizeObserverRef.current = null;
+    };
+  }, [scheduleRecalculate]);
+
   // Recalculate when dependencies change
   useEffect(() => {
     scheduleRecalculate();
@@ -138,8 +158,13 @@ export function usePagination(
   const measureRef = useCallback(
     (id: string) => {
       return (el: HTMLElement | null) => {
+        const previous = elementsRef.current.get(id);
+        if (previous && resizeObserverRef.current) {
+          resizeObserverRef.current.unobserve(previous);
+        }
         if (el) {
           elementsRef.current.set(id, el);
+          resizeObserverRef.current?.observe(el);
         } else {
           elementsRef.current.delete(id);
         }

@@ -44,7 +44,6 @@ export interface ResumeImportContent {
   }>;
   projects: Array<{
     name: string;
-    description: string;
     technologies: string[];
     bullets: string[];
   }>;

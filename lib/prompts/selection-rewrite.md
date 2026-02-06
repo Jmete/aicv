@@ -47,7 +47,7 @@ Constraints
   - skills
 - For insert values:
   - experience: JSON string of { company, jobTitle, location, startDate, endDate, bullets }
-  - projects: JSON string of { name, description, technologies, bullets }
+  - projects: JSON string of { name, technologies, bullets }
   - education: JSON string of { degree, institution, location, field, graduationDate, gpa }
   - skills: JSON string of { name, category }
   - bullets/technologies: plain string `value`

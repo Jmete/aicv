@@ -56,7 +56,6 @@ const resumeImportSchema = z.object({
     projects: z.array(
       z.object({
         name: z.string(),
-        description: z.string(),
         technologies: z.array(z.string()),
         bullets: z.array(z.string()),
       })
@@ -131,10 +130,7 @@ const buildAllPaths = (resume: ResumeImportContent) => {
   });
 
   resume.projects.forEach((project, i) => {
-    paths.push(
-      `projects[${i}].name`,
-      `projects[${i}].description`
-    );
+    paths.push(`projects[${i}].name`);
     project.technologies.forEach((_, j) =>
       paths.push(`projects[${i}].technologies[${j}]`)
     );

@@ -22,22 +22,46 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { companyName, jobTitle, jobUrl, jobDescription } = body;
+    const {
+      companyName,
+      jobTitle,
+      jobUrl,
+      jobDescription,
+      resumeContent,
+      coverLetterContent,
+      notes,
+    } = body;
 
-    if (!companyName || !jobTitle || !jobDescription) {
+    if (!companyName || !jobTitle || (!jobDescription && !jobUrl)) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 }
       );
     }
 
-    const result = await db.insert(applications).values({
-      companyName,
-      jobTitle,
-      jobUrl: jobUrl || null,
-      jobDescription,
-      status: "draft",
-    }).returning();
+    const toTextOrNull = (value: unknown) => {
+      if (value == null) return null;
+      if (typeof value === "string") return value;
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return null;
+      }
+    };
+
+    const result = await db
+      .insert(applications)
+      .values({
+        companyName,
+        jobTitle,
+        jobUrl: jobUrl || null,
+        jobDescription: jobDescription || "",
+        status: "draft",
+        resumeContent: toTextOrNull(resumeContent),
+        coverLetterContent: toTextOrNull(coverLetterContent),
+        notes: toTextOrNull(notes),
+      })
+      .returning();
 
     return NextResponse.json(result[0], { status: 201 });
   } catch (error) {

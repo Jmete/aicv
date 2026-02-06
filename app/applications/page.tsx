@@ -6,6 +6,7 @@ import { ArrowLeft, Briefcase, Calendar, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
 import { Sidebar } from "@/components/layout/sidebar";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +15,9 @@ interface Application {
   companyName: string;
   jobTitle: string;
   jobUrl: string | null;
+  jobDescription: string;
+  resumeContent: string | null;
+  coverLetterContent: string | null;
   status: string;
   createdAt: string;
 }
@@ -29,6 +33,7 @@ const statusColors: Record<string, string> = {
 export default function ApplicationsPage() {
   const [applications, setApplications] = useState<Application[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     async function fetchApplications() {
@@ -47,6 +52,16 @@ export default function ApplicationsPage() {
 
     fetchApplications();
   }, []);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredApplications = applications.filter((app) => {
+    if (!normalizedQuery) return true;
+    return (
+      (app.companyName || "").toLowerCase().includes(normalizedQuery) ||
+      (app.jobTitle || "").toLowerCase().includes(normalizedQuery) ||
+      (app.jobDescription || "").toLowerCase().includes(normalizedQuery)
+    );
+  });
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
@@ -83,8 +98,15 @@ export default function ApplicationsPage() {
                 </Button>
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {applications.map((app) => (
+              <div className="space-y-4">
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="Search by company, title, or job description..."
+                  className="max-w-md"
+                />
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredApplications.map((app) => (
                   <Card key={app.id} className="transition-shadow hover:shadow-md">
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between">
@@ -113,10 +135,21 @@ export default function ApplicationsPage() {
                             {new Date(app.createdAt).toLocaleDateString()}
                           </span>
                         </div>
+                        {(app.resumeContent || app.coverLetterContent) && (
+                          <p className="text-xs text-foreground">
+                            Optimized resume/cover letter saved
+                          </p>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
                 ))}
+                </div>
+                {filteredApplications.length === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    No applications match your search.
+                  </p>
+                )}
               </div>
             )}
           </div>

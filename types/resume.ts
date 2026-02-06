@@ -47,7 +47,6 @@ export interface ExperienceEntry {
 export interface ProjectEntry {
   id: string;
   name: string;
-  description: string;
   technologies: string[];
   bullets: string[];
 }

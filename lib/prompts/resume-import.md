@@ -48,7 +48,6 @@ Field path rules (use these exact paths in `fieldFeedback`)
 - experience[i].endDate
 - experience[i].bullets[j]
 - projects[i].name
-- projects[i].description
 - projects[i].technologies[k]
 - projects[i].bullets[j]
 - education[i].degree
@@ -89,7 +88,6 @@ Output JSON shape
     "projects": [
       {
         "name": "",
-        "description": "",
         "technologies": [""],
         "bullets": [""]
       }

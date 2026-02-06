@@ -85,7 +85,6 @@ export const buildResumeDataFromImport = (
     projects: (content?.projects ?? []).map((project) => ({
       id: createId(),
       name: safeString(project.name),
-      description: safeString(project.description),
       technologies: safeStringArray(project.technologies),
       bullets: safeStringArray(project.bullets),
     })),

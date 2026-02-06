@@ -121,6 +121,14 @@ interface ResumeViewerProps {
     suggestionId: string,
     replacement: string
   ) => void;
+  maxResumePages?: number;
+  onPageCountChange?: (counts: {
+    resumePages: number;
+    coverLetterPages: number;
+    isPrintPreviewMode: boolean;
+  }) => void;
+  debugData?: unknown;
+  onApplyDebugChanges?: () => void;
 }
 
 interface EditableTextProps {
@@ -743,6 +751,10 @@ export function ResumeViewer({
   onResumeUpdate,
   analysis,
   onApplySuggestion,
+  maxResumePages,
+  onPageCountChange,
+  debugData,
+  onApplyDebugChanges,
 }: ResumeViewerProps) {
   const {
     pageSettings,
@@ -984,10 +996,16 @@ export function ResumeViewer({
     section?: SectionKey;
   }>({ type: "selection" });
   const [isDebugOpen, setIsDebugOpen] = useState(false);
-  const rawDebugJson = useMemo(
-    () => (analysis?.raw ? JSON.stringify(analysis.raw, null, 2) : ""),
-    [analysis]
-  );
+  const rawDebugJson = useMemo(() => {
+    const source = debugData ?? analysis?.raw;
+    if (!source) return "";
+    try {
+      return JSON.stringify(source, null, 2);
+    } catch {
+      return String(source);
+    }
+  }, [analysis, debugData]);
+  const hasDebugData = rawDebugJson.length > 0;
   const resumeContentRef = useRef<HTMLDivElement>(null);
   const resumePaginationRecalculateRef = useRef<(() => void) | null>(null);
   const charMeasureCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -2027,7 +2045,6 @@ export function ResumeViewer({
     if (itemType === "project" && path === "projects") {
       const entry = parseJsonValue<{
         name?: string;
-        description?: string;
         technologies?: string[];
         bullets?: string[];
       }>(value);
@@ -2035,7 +2052,6 @@ export function ResumeViewer({
       return {
         id: crypto.randomUUID(),
         name: entry.name ?? "",
-        description: entry.description ?? "",
         technologies: Array.isArray(entry.technologies)
           ? entry.technologies
           : [],
@@ -2538,7 +2554,6 @@ export function ResumeViewer({
     const newEntry: ResumeData["projects"][number] = {
       id: crypto.randomUUID(),
       name: "",
-      description: "",
       technologies: [],
       bullets: [],
     };
@@ -3926,6 +3941,35 @@ export function ResumeViewer({
     return Array.from(indices).sort((a, b) => a - b);
   }, [coverLetterPagination.pages]);
 
+  const resumePageCount = resumePageIndices.length;
+  const coverLetterPageCount = coverLetterPageIndices.length;
+  const resumePageOverflow = Boolean(
+    maxResumePages && resumePageCount > maxResumePages
+  );
+  const coverLetterPageOverflow = coverLetterPageCount > 1;
+
+  useEffect(() => {
+    if (!onPageCountChange) return;
+    if (!isPrintPreviewMode) {
+      onPageCountChange({
+        resumePages: 0,
+        coverLetterPages: 0,
+        isPrintPreviewMode: false,
+      });
+      return;
+    }
+    onPageCountChange({
+      resumePages: resumePageCount,
+      coverLetterPages: coverLetterPageCount,
+      isPrintPreviewMode: true,
+    });
+  }, [
+    onPageCountChange,
+    resumePageCount,
+    coverLetterPageCount,
+    isPrintPreviewMode,
+  ]);
+
   // Pre-create ref callbacks to satisfy eslint
   const resumeRefCallbacks = useMemo(() => {
     const callbacks = new Map<string, (el: HTMLElement | null) => void>();
@@ -4303,14 +4347,26 @@ export function ResumeViewer({
         <div className="absolute right-4 top-[60px] z-40 w-[360px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium">LLM Raw Output</p>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-[11px]"
-              onClick={() => setIsDebugOpen(false)}
-            >
-              Close
-            </Button>
+            <div className="flex items-center gap-1">
+              {onApplyDebugChanges ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={onApplyDebugChanges}
+                >
+                  Apply Draft
+                </Button>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={() => setIsDebugOpen(false)}
+              >
+                Close
+              </Button>
+            </div>
           </div>
           <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-[10px] text-muted-foreground">
             {rawDebugJson || "No analysis yet."}
@@ -4334,6 +4390,35 @@ export function ResumeViewer({
             </TabsTrigger>
           </TabsList>
           <div className="flex items-center gap-2">
+            {maxResumePages && isPrintPreviewMode ? (
+              <div
+                className={cn(
+                  "rounded border px-2 py-1 text-[10px]",
+                  resumePageOverflow
+                    ? "border-destructive/50 bg-destructive/10 text-destructive"
+                    : "border-border bg-muted/30 text-muted-foreground"
+                )}
+              >
+                Resume {resumePageCount}/{maxResumePages}
+              </div>
+            ) : null}
+            {maxResumePages && isPrintPreviewMode ? (
+              <div
+                className={cn(
+                  "rounded border px-2 py-1 text-[10px]",
+                  coverLetterPageOverflow
+                    ? "border-destructive/50 bg-destructive/10 text-destructive"
+                    : "border-border bg-muted/30 text-muted-foreground"
+                )}
+              >
+                Cover {coverLetterPageCount}/1
+              </div>
+            ) : null}
+            {maxResumePages && !isPrintPreviewMode ? (
+              <div className="rounded border border-border bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
+                Enable Print Preview for export page count
+              </div>
+            ) : null}
             <Button
               variant="ghost"
               size="sm"
@@ -4373,7 +4458,7 @@ export function ResumeViewer({
               size="sm"
               className="h-7 px-2 text-[11px]"
               onClick={() => setIsDebugOpen((current) => !current)}
-              disabled={!analysis}
+              disabled={!hasDebugData}
             >
               {isDebugOpen ? "Hide Debug" : "Debug"}
               </Button>

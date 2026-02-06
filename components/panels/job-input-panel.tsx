@@ -1,11 +1,15 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ApplicationFormData } from "@/components/layout/app-layout";
+import type {
+  AnalyzeSuggestion,
+  ApplicationFormData,
+} from "@/components/layout/app-layout";
 
 interface JobInputPanelProps {
   formData: ApplicationFormData;
@@ -13,7 +17,56 @@ interface JobInputPanelProps {
   onAnalyze: () => void;
   onSave: () => void;
   isAnalyzing: boolean;
+  analyzeError: string | null;
+  analyzeMeta: {
+    jobDescriptionSource: "manual" | "url" | "url+manual";
+    scrapeWarning: string | null;
+    estimatedResumePages: number;
+    estimatedCoverLetterPages: number;
+  } | null;
+  actualResumePages: number;
+  actualCoverLetterPages: number;
+  isPrintPreviewMode: boolean;
+  analyzeSuggestions: AnalyzeSuggestion[];
+  onAcceptAnalyzeSuggestion: (suggestionId: string) => void;
+  onRejectAnalyzeSuggestion: (suggestionId: string) => void;
+  onApplyAllAnalyzeSuggestions: () => void;
+  onDiscardAnalyzeSuggestions: () => void;
+  onResetResume: () => void;
 }
+
+const SUGGESTION_SECTION_ORDER = [
+  "summary",
+  "experience",
+  "projects",
+  "skills",
+  "cover-letter",
+  "education",
+  "other",
+] as const;
+
+const SUGGESTION_SECTION_LABELS: Record<
+  (typeof SUGGESTION_SECTION_ORDER)[number],
+  string
+> = {
+  summary: "Summary & Header",
+  experience: "Experience",
+  projects: "Projects",
+  skills: "Skills",
+  "cover-letter": "Cover Letter",
+  education: "Education",
+  other: "Other",
+};
+
+const getSuggestionSection = (path: string) => {
+  if (path.startsWith("metadata.")) return "summary";
+  if (path.startsWith("experience[")) return "experience";
+  if (path.startsWith("projects[")) return "projects";
+  if (path.startsWith("skills")) return "skills";
+  if (path.startsWith("coverLetter")) return "cover-letter";
+  if (path.startsWith("education[")) return "education";
+  return "other";
+};
 
 export function JobInputPanel({
   formData,
@@ -21,18 +74,72 @@ export function JobInputPanel({
   onAnalyze,
   onSave,
   isAnalyzing,
+  analyzeError,
+  analyzeMeta,
+  actualResumePages,
+  actualCoverLetterPages,
+  isPrintPreviewMode,
+  analyzeSuggestions,
+  onAcceptAnalyzeSuggestion,
+  onRejectAnalyzeSuggestion,
+  onApplyAllAnalyzeSuggestions,
+  onDiscardAnalyzeSuggestions,
+  onResetResume,
 }: JobInputPanelProps) {
-  const handleChange = (
-    field: keyof ApplicationFormData,
+  const handleTextChange = (
+    field: "companyName" | "jobTitle" | "jobUrl" | "jobDescription",
     value: string
   ) => {
     onChange({ ...formData, [field]: value });
   };
 
-  const canSave =
+  const handleMaxResumePagesChange = (value: number) => {
+    onChange({ ...formData, maxResumePages: value });
+  };
+
+  const canSave = Boolean(
     formData.companyName.trim() &&
-    formData.jobTitle.trim() &&
-    formData.jobDescription.trim();
+      formData.jobTitle.trim() &&
+      (formData.jobDescription.trim() || formData.jobUrl.trim())
+  );
+  const canAnalyze = Boolean(
+    formData.jobDescription.trim() || formData.jobUrl.trim()
+  );
+  const pendingSuggestions = analyzeSuggestions.filter(
+    (suggestion) => suggestion.status === "pending"
+  );
+  const [collapsedSections, setCollapsedSections] = useState<
+    Record<string, boolean>
+  >({});
+  const groupedSuggestions = useMemo(() => {
+    const buckets: Record<string, AnalyzeSuggestion[]> = {};
+
+    for (const suggestion of analyzeSuggestions) {
+      const section = getSuggestionSection(suggestion.path);
+      if (!buckets[section]) {
+        buckets[section] = [];
+      }
+      buckets[section].push(suggestion);
+    }
+
+    return SUGGESTION_SECTION_ORDER.flatMap((section) => {
+      const suggestions = buckets[section] ?? [];
+      if (suggestions.length === 0) return [];
+      const pending = suggestions.filter((s) => s.status === "pending").length;
+      const accepted = suggestions.filter((s) => s.status === "accepted").length;
+      const rejected = suggestions.filter((s) => s.status === "rejected").length;
+      return [
+        {
+          key: section,
+          label: SUGGESTION_SECTION_LABELS[section],
+          suggestions,
+          pending,
+          accepted,
+          rejected,
+        },
+      ];
+    });
+  }, [analyzeSuggestions]);
 
   return (
     <div className="flex h-full flex-col">
@@ -54,7 +161,7 @@ export function JobInputPanel({
               type="url"
               placeholder="https://..."
               value={formData.jobUrl}
-              onChange={(e) => handleChange("jobUrl", e.target.value)}
+              onChange={(e) => handleTextChange("jobUrl", e.target.value)}
             />
           </div>
 
@@ -69,7 +176,7 @@ export function JobInputPanel({
               id="companyName"
               placeholder="Acme Inc."
               value={formData.companyName}
-              onChange={(e) => handleChange("companyName", e.target.value)}
+              onChange={(e) => handleTextChange("companyName", e.target.value)}
             />
           </div>
 
@@ -84,7 +191,7 @@ export function JobInputPanel({
               id="jobTitle"
               placeholder="Software Engineer"
               value={formData.jobTitle}
-              onChange={(e) => handleChange("jobTitle", e.target.value)}
+              onChange={(e) => handleTextChange("jobTitle", e.target.value)}
             />
           </div>
 
@@ -100,9 +207,179 @@ export function JobInputPanel({
               placeholder="Paste the job description here..."
               className="min-h-[200px] resize-none"
               value={formData.jobDescription}
-              onChange={(e) => handleChange("jobDescription", e.target.value)}
+              onChange={(e) =>
+                handleTextChange("jobDescription", e.target.value)
+              }
             />
           </div>
+
+          <div className="space-y-2">
+            <label
+              htmlFor="maxResumePages"
+              className="text-sm font-medium text-muted-foreground"
+            >
+              Max Resume Pages
+            </label>
+            <Input
+              id="maxResumePages"
+              type="number"
+              min={1}
+              max={4}
+              value={formData.maxResumePages}
+              onChange={(event) => {
+                const parsed = Number.parseInt(event.target.value, 10);
+                handleMaxResumePagesChange(
+                  Number.isFinite(parsed) ? Math.min(4, Math.max(1, parsed)) : 1
+                );
+              }}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {isPrintPreviewMode
+                ? `Print-preview pages: resume ${actualResumePages}/${formData.maxResumePages}, cover letter ${actualCoverLetterPages}/1`
+                : "Print preview is off. Enable Print Preview to see export-accurate page counts."}
+            </p>
+          </div>
+
+          {analyzeMeta && (
+            <div className="rounded-md border border-border bg-muted/30 p-2 text-[11px] text-muted-foreground">
+              <p>
+                Last source: {analyzeMeta.jobDescriptionSource} | Estimated pages: resume {analyzeMeta.estimatedResumePages}/{formData.maxResumePages}, cover {analyzeMeta.estimatedCoverLetterPages}/1
+              </p>
+              {analyzeMeta.scrapeWarning && (
+                <p className="mt-1 text-destructive">{analyzeMeta.scrapeWarning}</p>
+              )}
+            </div>
+          )}
+
+          {analyzeError && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-[11px] text-destructive">
+              {analyzeError}
+            </div>
+          )}
+
+          {analyzeSuggestions.length > 0 && (
+            <div className="space-y-2 rounded-md border border-border bg-card p-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-foreground">
+                  AI Suggestions ({pendingSuggestions.length} pending)
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-6 px-2 text-[10px]"
+                    onClick={onApplyAllAnalyzeSuggestions}
+                  >
+                    Apply All
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-[10px]"
+                    onClick={onDiscardAnalyzeSuggestions}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {groupedSuggestions.map((group) => {
+                  const isCollapsed = collapsedSections[group.key] ?? false;
+                  return (
+                    <div
+                      key={group.key}
+                      className="rounded border border-border/70 bg-background"
+                    >
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between px-2 py-1.5 text-left"
+                        onClick={() =>
+                          setCollapsedSections((current) => ({
+                            ...current,
+                            [group.key]: !isCollapsed,
+                          }))
+                        }
+                      >
+                        <div>
+                          <p className="text-[11px] font-medium text-foreground">
+                            {group.label}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {group.pending} pending • {group.accepted} accepted • {group.rejected} rejected
+                          </p>
+                        </div>
+                        {isCollapsed ? (
+                          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                        ) : (
+                          <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                        )}
+                      </button>
+                      {!isCollapsed && (
+                        <div className="space-y-2 border-t border-border/60 p-2">
+                          {group.suggestions.map((suggestion) => (
+                            <div
+                              key={suggestion.id}
+                              className="rounded border border-border/70 bg-card p-2"
+                            >
+                              <p className="text-[11px] font-medium text-foreground">
+                                {suggestion.label}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {suggestion.op.toUpperCase()} • {suggestion.path}
+                              </p>
+                              {suggestion.beforeText ? (
+                                <p className="mt-1 text-[10px] text-muted-foreground line-clamp-2">
+                                  From: {suggestion.beforeText}
+                                </p>
+                              ) : null}
+                              {suggestion.afterText ? (
+                                <p className="mt-1 text-[10px] text-foreground line-clamp-2">
+                                  To: {suggestion.afterText}
+                                </p>
+                              ) : null}
+                              <div className="mt-2 flex items-center justify-between">
+                                <span className="text-[10px] text-muted-foreground capitalize">
+                                  {suggestion.status}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 px-2 text-[10px]"
+                                    onClick={() =>
+                                      onRejectAnalyzeSuggestion(suggestion.id)
+                                    }
+                                    disabled={suggestion.status !== "pending"}
+                                  >
+                                    Reject
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    className="h-6 px-2 text-[10px]"
+                                    onClick={() =>
+                                      onAcceptAnalyzeSuggestion(suggestion.id)
+                                    }
+                                    disabled={suggestion.status !== "pending"}
+                                  >
+                                    Accept
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </ScrollArea>
 
@@ -112,7 +389,7 @@ export function JobInputPanel({
             variant="secondary"
             className="flex-1"
             onClick={onAnalyze}
-            disabled={!formData.jobDescription.trim() || isAnalyzing}
+            disabled={!canAnalyze || isAnalyzing}
           >
             {isAnalyzing ? (
               <>
@@ -131,6 +408,14 @@ export function JobInputPanel({
             Save
           </Button>
         </div>
+        <Button
+          variant="ghost"
+          className="mt-2 w-full"
+          onClick={onResetResume}
+          disabled={isAnalyzing}
+        >
+          Reset Resume
+        </Button>
       </div>
     </div>
   );

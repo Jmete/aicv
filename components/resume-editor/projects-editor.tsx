@@ -17,7 +17,6 @@ export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
     const newEntry: ProjectEntry = {
       id: crypto.randomUUID(),
       name: "",
-      description: "",
       technologies: [],
       bullets: [],
     };
