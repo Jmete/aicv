@@ -80,6 +80,21 @@ export default function SettingsPage() {
         throw new Error(payload?.error || "Import failed.");
       }
 
+      if (payload?.mode === "resume-data" && payload?.resumeData) {
+        const nextResumeData = payload.resumeData as ResumeData;
+        setResumeData(nextResumeData);
+        setResumeAnalysis(null);
+        const saveResponse = await fetch("/api/resume-data", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(nextResumeData),
+        });
+        if (!saveResponse.ok) {
+          throw new Error("Config imported, but saving failed.");
+        }
+        return;
+      }
+
       setResumeData((current) =>
         buildResumeDataFromImport(current, payload.resume)
       );

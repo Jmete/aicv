@@ -61,7 +61,7 @@ export function ResumeImportPanel({
           <div>
             <p className="text-sm font-medium text-foreground">Import Resume</p>
             <p className="text-xs text-muted-foreground">
-              Upload PDF, DOCX, TXT, or MD.
+              Upload PDF, DOCX, TXT, MD, or JSON.
             </p>
           </div>
         </div>
@@ -83,7 +83,7 @@ export function ResumeImportPanel({
             </div>
             <Input
               type="file"
-              accept=".pdf,.docx,.txt,.md"
+              accept=".pdf,.docx,.txt,.md,.json"
               onChange={handleFileChange}
               disabled={isImporting}
               className="file:mr-3 file:rounded-md file:border file:border-border file:bg-background file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground hover:file:bg-accent"
