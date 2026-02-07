@@ -37,6 +37,7 @@ import {
   getFontSafetyBuffer,
   type FieldLengthConstraint,
 } from "@/lib/line-constraints";
+import { createId } from "@/lib/id";
 import { cn } from "@/lib/utils";
 import type {
   ContactFieldKey,
@@ -1742,7 +1743,7 @@ export function ResumeViewer({
       (link) => !overlapsSelection(link)
     );
     nextHyperlinks.push({
-      id: crypto.randomUUID(),
+      id: createId(),
       path: hyperlinkSelection.path,
       start: hyperlinkSelection.start,
       end: hyperlinkSelection.end,
@@ -1915,16 +1916,16 @@ export function ResumeViewer({
         ];
         if (!replaceTypes.includes(operation.itemType)) return [];
         if (!operation.value?.trim()) return [];
-        return [{ ...operation, id: crypto.randomUUID() }];
+        return [{ ...operation, id: createId() }];
       }
       if (operation.op === "delete") {
         if (!allowedDeletes.has(operation.path)) return [];
-        return [{ ...operation, id: crypto.randomUUID() }];
+        return [{ ...operation, id: createId() }];
       }
       if (operation.op === "insert") {
         if (!allowedInserts.has(operation.path)) return [];
         if (!operation.value) return [];
-        return [{ ...operation, id: crypto.randomUUID() }];
+        return [{ ...operation, id: createId() }];
       }
       return [];
     });
@@ -2090,7 +2091,7 @@ export function ResumeViewer({
 
           setBulkOps([
             {
-              id: crypto.randomUUID(),
+              id: createId(),
               op: "replace",
               path: selectedField.path,
               value: replacement,
@@ -2177,7 +2178,7 @@ export function ResumeViewer({
       }>(value);
       if (!entry) return null;
       return {
-        id: crypto.randomUUID(),
+        id: createId(),
         company: entry.company ?? "",
         jobTitle: entry.jobTitle ?? "",
         location: entry.location ?? "",
@@ -2195,7 +2196,7 @@ export function ResumeViewer({
       }>(value);
       if (!entry) return null;
       return {
-        id: crypto.randomUUID(),
+        id: createId(),
         name: entry.name ?? "",
         technologies: Array.isArray(entry.technologies)
           ? entry.technologies
@@ -2215,7 +2216,7 @@ export function ResumeViewer({
       }>(value);
       if (!entry) return null;
       return {
-        id: crypto.randomUUID(),
+        id: createId(),
         degree: entry.degree ?? "",
         institution: entry.institution ?? "",
         location: entry.location ?? "",
@@ -2229,7 +2230,7 @@ export function ResumeViewer({
       const entry = parseJsonValue<{ name?: string; category?: string }>(value);
       if (!entry) return null;
       return {
-        id: crypto.randomUUID(),
+        id: createId(),
         name: entry.name ?? "",
         category: entry.category ?? "",
       };
@@ -2664,7 +2665,7 @@ export function ResumeViewer({
 
   const addExperienceEntry = () => {
     const newEntry: ResumeData["experience"][number] = {
-      id: crypto.randomUUID(),
+      id: createId(),
       company: "",
       jobTitle: "",
       location: "",
@@ -2697,7 +2698,7 @@ export function ResumeViewer({
 
   const addProjectEntry = () => {
     const newEntry: ResumeData["projects"][number] = {
-      id: crypto.randomUUID(),
+      id: createId(),
       name: "",
       technologies: [],
       bullets: [],
@@ -2727,7 +2728,7 @@ export function ResumeViewer({
 
   const addEducationEntry = () => {
     const newEntry: ResumeData["education"][number] = {
-      id: crypto.randomUUID(),
+      id: createId(),
       degree: "",
       institution: "",
       location: "",
@@ -2747,7 +2748,7 @@ export function ResumeViewer({
 
   const addSkill = (category = "") => {
     const newSkill: ResumeData["skills"][number] = {
-      id: crypto.randomUUID(),
+      id: createId(),
       name: "",
       category,
     };
@@ -4248,7 +4249,7 @@ export function ResumeViewer({
           !isBulkOpen &&
           !isPrintPreviewMode && (
             <div
-              className="fixed z-40 w-[360px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl"
+              className="fixed z-40 w-[min(360px,calc(100vw-1rem))] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl"
               style={{
                 top: selectionAnchor.top + 40,
                 left: clamp(
@@ -4256,7 +4257,9 @@ export function ResumeViewer({
                   8,
                   typeof window === "undefined"
                     ? selectionAnchor.left
-                    : window.innerWidth - 360 - 8
+                    : window.innerWidth -
+                        Math.min(360, window.innerWidth - 16) -
+                        8
                 ),
               }}
             >
@@ -4316,7 +4319,7 @@ export function ResumeViewer({
           )}
       {isBulkOpen && !isPrintPreviewMode && (
         <div
-          className="absolute right-4 z-40 w-[380px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl"
+          className="absolute left-2 right-2 z-40 w-auto rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl sm:left-auto sm:right-4 sm:w-[380px]"
           style={{ top: `${bulkPanelTop}px` }}
         >
           <div className="flex items-center justify-between">
@@ -4519,7 +4522,7 @@ export function ResumeViewer({
         </div>
       )}
       {isDebugOpen && (
-        <div className="absolute right-4 top-[60px] z-40 w-[360px] rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl">
+        <div className="absolute left-2 right-2 top-[60px] z-40 w-auto rounded-md border border-border bg-popover p-3 text-popover-foreground shadow-xl sm:left-auto sm:right-4 sm:w-[360px]">
           <div className="flex items-center justify-between">
             <p className="text-xs font-medium">Debug</p>
             <div className="flex items-center gap-1">
@@ -4560,7 +4563,7 @@ export function ResumeViewer({
             }}
             className="mt-2"
           >
-            <TabsList className="h-8 w-full justify-start gap-1">
+            <TabsList className="h-8 w-full justify-start gap-1 overflow-x-auto">
               <TabsTrigger value="resume-json" className="h-6 px-2 text-[10px]">
                 Resume JSON
               </TabsTrigger>
@@ -4593,25 +4596,25 @@ export function ResumeViewer({
         }}
         className="flex h-full flex-col"
       >
-        <div className="flex h-[52px] items-center border-b border-border px-4">
-          <TabsList className="h-12 flex-1 justify-start gap-4 bg-transparent p-0">
+        <div className="flex min-h-[52px] flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:h-[52px] sm:flex-nowrap sm:px-4 sm:py-0">
+          <TabsList className="h-9 flex-1 justify-start gap-3 overflow-x-auto bg-transparent p-0 text-foreground sm:h-12 sm:gap-4">
             <TabsTrigger
               value="resume"
-              className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none px-0 pb-3 pt-3"
+              className="shrink-0 rounded-none px-0 py-2 text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none sm:pb-3 sm:pt-3"
             >
               Resume
             </TabsTrigger>
             {canShowCoverLetterTab ? (
               <TabsTrigger
                 value="cover-letter"
-                className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none rounded-none px-0 pb-3 pt-3"
+                className="shrink-0 rounded-none px-0 py-2 text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none sm:pb-3 sm:pt-3"
               >
                 Cover Letter
               </TabsTrigger>
             ) : null}
           </TabsList>
           {!readOnly ? (
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:gap-2">
               {maxResumePages && isPrintPreviewMode ? (
                 <div
                   className={cn(
@@ -4637,7 +4640,7 @@ export function ResumeViewer({
                 </div>
               ) : null}
               {maxResumePages && !isPrintPreviewMode ? (
-                <div className="rounded border border-border bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground">
+                <div className="hidden rounded border border-border bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground sm:block">
                   Enable Print Preview for export page count
                 </div>
               ) : null}
@@ -4695,7 +4698,7 @@ export function ResumeViewer({
         </div>
 
         <ScrollArea className="flex-1">
-          <div className="flex justify-center p-8">
+          <div className="flex justify-center p-3 sm:p-8">
             <TabsContent
               value="resume"
               className="mt-0 w-full"

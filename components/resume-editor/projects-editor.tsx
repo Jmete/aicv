@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { createId } from "@/lib/id";
 import type { ProjectEntry } from "@/types";
 import { Plus, Trash2 } from "lucide-react";
 
@@ -15,7 +16,7 @@ interface ProjectsEditorProps {
 export function ProjectsEditor({ projects, onChange }: ProjectsEditorProps) {
   const addEntry = () => {
     const newEntry: ProjectEntry = {
-      id: crypto.randomUUID(),
+      id: createId(),
       name: "",
       technologies: [],
       bullets: [],

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { generateObject, jsonSchema } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { AI_MODELS } from "@/lib/ai-models";
 import {
   estimateWrappedLineCount,
   type FieldLengthConstraint,
@@ -211,7 +211,7 @@ export async function POST(request: Request) {
 
     for (let attempt = 1; attempt <= MAX_REWRITE_ATTEMPTS; attempt += 1) {
       const result = await generateObject({
-        model: openai("gpt-5-nano"),
+        model: AI_MODELS.selectionRewrite,
         system,
         prompt: [
           basePrompt,

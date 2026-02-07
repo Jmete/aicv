@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { createId } from "@/lib/id";
 import type { SkillEntry } from "@/types";
 import { Plus, Trash2 } from "lucide-react";
 
@@ -17,7 +18,7 @@ export function SkillsEditor({ skills, onChange }: SkillsEditorProps) {
 
   const addSkill = (category = "") => {
     const newSkill: SkillEntry = {
-      id: crypto.randomUUID(),
+      id: createId(),
       name: "",
       category,
     };

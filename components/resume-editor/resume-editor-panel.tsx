@@ -68,46 +68,46 @@ export function ResumeEditorPanel({
     <div className="flex h-full flex-col">
       <Tabs defaultValue="info" className="flex flex-1 flex-col overflow-hidden">
         <div className="flex h-[52px] items-center border-b border-border px-4">
-          <TabsList className="grid h-full w-full grid-cols-7 bg-transparent p-0">
+          <TabsList className="flex h-full w-full justify-start gap-1 overflow-x-auto bg-transparent p-0 md:grid md:grid-cols-7 md:gap-0 md:overflow-visible">
             <TabsTrigger
               value="layout"
-              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full shrink-0 rounded-none border-b-2 border-transparent px-2 text-xs text-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground md:w-full"
             >
               Layout
             </TabsTrigger>
             <TabsTrigger
               value="info"
-              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full shrink-0 rounded-none border-b-2 border-transparent px-2 text-xs text-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground md:w-full"
             >
               Info
             </TabsTrigger>
             <TabsTrigger
               value="work"
-              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full shrink-0 rounded-none border-b-2 border-transparent px-2 text-xs text-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground md:w-full"
             >
               Work
             </TabsTrigger>
             <TabsTrigger
               value="projects"
-              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full shrink-0 rounded-none border-b-2 border-transparent px-2 text-xs text-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground md:w-full"
             >
               Projects
             </TabsTrigger>
             <TabsTrigger
               value="education"
-              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full shrink-0 rounded-none border-b-2 border-transparent px-2 text-xs text-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground md:w-full"
             >
               Edu
             </TabsTrigger>
             <TabsTrigger
               value="skills"
-              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full shrink-0 rounded-none border-b-2 border-transparent px-2 text-xs text-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground md:w-full"
             >
               Skills
             </TabsTrigger>
             <TabsTrigger
               value="cover"
-              className="h-full rounded-none border-b-2 border-transparent px-2 text-xs data-[state=active]:border-primary data-[state=active]:bg-transparent"
+              className="h-full shrink-0 rounded-none border-b-2 border-transparent px-2 text-xs text-foreground data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground md:w-full"
             >
               Cover
             </TabsTrigger>

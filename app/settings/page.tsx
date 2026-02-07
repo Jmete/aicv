@@ -48,6 +48,9 @@ export default function SettingsPage() {
   >("idle");
   const [activeOption, setActiveOption] =
     useState<SettingsOptionId>("default-resume");
+  const [mobileDefaultResumeTab, setMobileDefaultResumeTab] = useState<
+    "preview" | "edit"
+  >("preview");
 
   const activeOptionData = settingsOptions.find(
     (option) => option.id === activeOption
@@ -207,11 +210,11 @@ export default function SettingsPage() {
   }, [isLoading, resumeData]);
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-background pb-20 md:pb-0">
       <Sidebar />
 
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex items-center gap-4 border-b border-border px-6 py-3">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3 md:gap-4 md:px-6">
           <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
             <Link href="/">
               <ArrowLeft className="h-4 w-4" />
@@ -219,7 +222,9 @@ export default function SettingsPage() {
             </Link>
           </Button>
           <h1 className="text-sm font-medium">Settings</h1>
-          <p className="text-xs text-muted-foreground">{activeOptionData?.description}</p>
+          <p className="hidden text-xs text-muted-foreground md:block">
+            {activeOptionData?.description}
+          </p>
           {activeOption === "default-resume" && (
             <div
               className={cn(
@@ -232,15 +237,41 @@ export default function SettingsPage() {
               {isLoading
                 ? "Loading..."
                 : saveStatus === "saving"
-                ? "Saving..."
-                : saveStatus === "error"
-                ? "Save failed"
-                : "Saved"}
+                  ? "Saving..."
+                  : saveStatus === "error"
+                    ? "Save failed"
+                    : "Saved"}
             </div>
           )}
         </header>
 
-        <div className="flex flex-1 overflow-hidden">
+        <div className="border-b border-border md:hidden">
+          <ScrollArea className="w-full whitespace-nowrap">
+            <div className="flex gap-2 p-2">
+              {settingsOptions.map((option) => {
+                const Icon = option.icon;
+                const isActive = option.id === activeOption;
+                return (
+                  <Button
+                    key={option.id}
+                    type="button"
+                    variant={isActive ? "secondary" : "ghost"}
+                    className="h-8 shrink-0 gap-1.5 px-3 text-xs text-foreground"
+                    onClick={() => setActiveOption(option.id)}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {option.label}
+                  </Button>
+                );
+              })}
+            </div>
+          </ScrollArea>
+          <p className="px-3 pb-2 text-xs text-foreground">
+            {activeOptionData?.description}
+          </p>
+        </div>
+
+        <div className="hidden min-w-0 flex-1 overflow-hidden md:flex">
           <div className="w-80 shrink-0 border-r border-border">
             <ScrollArea className="h-full">
               <ul className="space-y-2 p-4">
@@ -280,7 +311,7 @@ export default function SettingsPage() {
 
           {activeOption === "default-resume" ? (
             <>
-              <div className="flex-1 overflow-hidden">
+              <div className="min-w-0 flex-1 overflow-hidden">
                 <ResumeViewer
                   resumeData={resumeData}
                   onResumeUpdate={handleResumeUpdate}
@@ -310,6 +341,71 @@ export default function SettingsPage() {
                 </p>
               </div>
             </div>
+          )}
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:hidden">
+          {activeOption === "default-resume" ? (
+            <>
+              <div className="border-b border-border bg-card/40 p-2">
+                <div className="grid grid-cols-2 gap-1 rounded-lg border border-border/70 bg-muted/30 p-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={
+                      mobileDefaultResumeTab === "preview" ? "secondary" : "ghost"
+                    }
+                    className="h-8 text-xs text-foreground"
+                    onClick={() => setMobileDefaultResumeTab("preview")}
+                  >
+                    Preview
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={
+                      mobileDefaultResumeTab === "edit" ? "secondary" : "ghost"
+                    }
+                    className="h-8 text-xs text-foreground"
+                    onClick={() => setMobileDefaultResumeTab("edit")}
+                  >
+                    Edit
+                  </Button>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {mobileDefaultResumeTab === "preview" ? (
+                  <ResumeViewer
+                    resumeData={resumeData}
+                    onResumeUpdate={handleResumeUpdate}
+                    analysis={resumeAnalysis}
+                    onApplySuggestion={handleApplySuggestion}
+                  />
+                ) : (
+                  <ResumeEditorPanel
+                    resumeData={resumeData}
+                    onResumeUpdate={handleResumeUpdate}
+                    onImportResume={handleImportResume}
+                    isImportingResume={isImportingResume}
+                    importError={importError}
+                  />
+                )}
+              </div>
+            </>
+          ) : (
+            <ScrollArea className="flex-1">
+              <div className="p-4">
+                <div className="rounded-lg border border-border bg-card p-5">
+                  <h2 className="text-sm font-medium text-foreground">
+                    {activeOptionData?.label}
+                  </h2>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    This section is available in the menu and can be expanded next.
+                  </p>
+                </div>
+              </div>
+            </ScrollArea>
           )}
         </div>
       </div>

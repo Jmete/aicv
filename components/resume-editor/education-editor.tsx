@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { createId } from "@/lib/id";
 import type { EducationEntry, EducationOrder } from "@/types";
 import { Plus, Trash2 } from "lucide-react";
 
@@ -22,7 +23,7 @@ export function EducationEditor({
 }: EducationEditorProps) {
   const addEntry = () => {
     const newEntry: EducationEntry = {
-      id: crypto.randomUUID(),
+      id: createId(),
       degree: "",
       institution: "",
       location: "",

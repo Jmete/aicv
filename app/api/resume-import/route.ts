@@ -5,8 +5,9 @@ import { PDFParse } from "pdf-parse";
 import mammoth from "mammoth";
 import { z } from "zod";
 import { generateObject } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { AI_MODELS } from "@/lib/ai-models";
 import { DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
+import { createId } from "@/lib/id";
 import type { ContactFieldKey, ResumeData, ResumeImportContent } from "@/types";
 
 export const runtime = "nodejs";
@@ -162,8 +163,6 @@ const normalizeOrderedValues = <T extends string>(
 
   return result;
 };
-
-const createId = () => crypto.randomUUID();
 
 const normalizeMargins = (
   value: unknown,
@@ -709,7 +708,7 @@ export async function POST(request: Request) {
     const system = await getPrompt();
 
     const result = await generateObject({
-      model: openai("gpt-5-nano"),
+      model: AI_MODELS.resumeImport,
       system,
       prompt: `Resume text:\n${extractedText}`,
       schema: resumeImportSchema,

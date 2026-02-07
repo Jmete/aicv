@@ -15,9 +15,12 @@ import type {
 interface JobInputPanelProps {
   formData: ApplicationFormData;
   onChange: (data: ApplicationFormData) => void;
+  onExtractJobDescription: () => void;
   onAnalyze: () => void;
   onSave: () => void;
+  isExtractingJobDescription: boolean;
   isAnalyzing: boolean;
+  extractError: string | null;
   analyzeError: string | null;
   analyzeMeta: {
     jobDescriptionSource: "manual" | "url" | "url+manual";
@@ -73,9 +76,12 @@ const getSuggestionSection = (path: string) => {
 export function JobInputPanel({
   formData,
   onChange,
+  onExtractJobDescription,
   onAnalyze,
   onSave,
+  isExtractingJobDescription,
   isAnalyzing,
+  extractError,
   analyzeError,
   analyzeMeta,
   actualResumePages,
@@ -104,6 +110,7 @@ export function JobInputPanel({
     onChange({ ...formData, maxResumePages: value });
   };
 
+  const canExtract = Boolean(formData.jobUrl.trim());
   const canSave = Boolean(
     formData.companyName.trim() &&
       formData.jobTitle.trim() &&
@@ -163,13 +170,37 @@ export function JobInputPanel({
             >
               Job URL (optional)
             </label>
-            <Input
-              id="jobUrl"
-              type="url"
-              placeholder="https://..."
-              value={formData.jobUrl}
-              onChange={(e) => handleTextChange("jobUrl", e.target.value)}
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                id="jobUrl"
+                type="text"
+                inputMode="url"
+                autoComplete="url"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                placeholder="https://..."
+                value={formData.jobUrl}
+                onChange={(e) => handleTextChange("jobUrl", e.target.value)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-10 shrink-0 px-3"
+                onClick={onExtractJobDescription}
+                disabled={!canExtract || isExtractingJobDescription || isAnalyzing}
+              >
+                {isExtractingJobDescription ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Extracting...
+                  </>
+                ) : (
+                  "Extract"
+                )}
+              </Button>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -275,6 +306,12 @@ export function JobInputPanel({
               {analyzeMeta.scrapeWarning && (
                 <p className="mt-1 text-destructive">{analyzeMeta.scrapeWarning}</p>
               )}
+            </div>
+          )}
+
+          {extractError && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-[11px] text-destructive">
+              {extractError}
             </div>
           )}
 
@@ -460,7 +497,7 @@ export function JobInputPanel({
             variant="secondary"
             className="flex-1"
             onClick={onAnalyze}
-            disabled={!canAnalyze || isAnalyzing}
+            disabled={!canAnalyze || isAnalyzing || isExtractingJobDescription}
           >
             {isAnalyzing ? (
               <>

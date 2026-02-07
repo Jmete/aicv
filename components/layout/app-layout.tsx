@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
+import { createId } from "@/lib/id";
 import {
   buildResumeDataFromImport,
   parseFieldPath,
@@ -75,11 +76,6 @@ interface TuneDiff {
   evidenceLevel: "explicit" | "conservative_rephrase";
   manualApprovalRequired: boolean;
 }
-
-const createId = () =>
-  typeof crypto !== "undefined"
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random()}`;
 
 const normalizeComparable = (value: string) =>
   value.replace(/\s+/g, " ").trim();
@@ -534,6 +530,9 @@ const getSuggestionDocumentTab = (
 
 export function AppLayout() {
   const [formData, setFormData] = useState<ApplicationFormData>(initialFormData);
+  const [isExtractingJobDescription, setIsExtractingJobDescription] =
+    useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [selectedSkills, setSelectedSkills] = useState<number[]>([]);
   const [defaultResumeData, setDefaultResumeData] =
@@ -567,9 +566,17 @@ export function AppLayout() {
   const [diffDocumentTab, setDiffDocumentTab] = useState<
     "resume" | "cover-letter"
   >("resume");
+  const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<
+    "job" | "preview" | "edit"
+  >("preview");
+  const [mobileDiffSection, setMobileDiffSection] = useState<
+    "original" | "updated" | "suggestions"
+  >("updated");
 
   const handleNewApplication = useCallback(() => {
     setFormData(initialFormData);
+    setIsExtractingJobDescription(false);
+    setExtractError(null);
     setSelectedSkills([]);
     setResumeData(defaultResumeData);
     setResumeAnalysis(null);
@@ -583,6 +590,8 @@ export function AppLayout() {
     setIsDiffViewOpen(false);
     setHoveredSuggestionId(null);
     setDiffDocumentTab("resume");
+    setMobileWorkspaceTab("preview");
+    setMobileDiffSection("updated");
     setPageCounts({
       resumePages: 0,
       coverLetterPages: 0,
@@ -592,6 +601,11 @@ export function AppLayout() {
 
   const handleResumeUpdate = useCallback((data: ResumeData) => {
     setResumeData(withResumeIntegrityGuardrails(data));
+  }, []);
+
+  const handleFormDataChange = useCallback((data: ApplicationFormData) => {
+    setFormData(data);
+    setExtractError(null);
   }, []);
 
   useEffect(() => {
@@ -620,18 +634,119 @@ export function AppLayout() {
     };
   }, []);
 
+  const handleExtractJobDescription = useCallback(async () => {
+    const jobUrl = formData.jobUrl.trim();
+    if (!jobUrl) {
+      setExtractError("Enter a job URL to extract.");
+      return;
+    }
+
+    setIsExtractingJobDescription(true);
+    setExtractError(null);
+
+    try {
+      const response = await fetch("/api/extract-job-description", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobUrl }),
+      });
+      const rawText = await response.text();
+      let payload: any = {};
+      if (rawText) {
+        try {
+          payload = JSON.parse(rawText);
+        } catch {
+          throw new Error("Extract failed. Server returned invalid JSON.");
+        }
+      }
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to extract job description.");
+      }
+      if (!payload?.jobDescription || typeof payload.jobDescription !== "string") {
+        throw new Error("Extraction failed. No job description text was returned.");
+      }
+      setFormData((current) => ({
+        ...current,
+        jobDescription: payload.jobDescription,
+      }));
+    } catch (error) {
+      console.error("Error extracting job description:", error);
+      setExtractError(
+        error instanceof Error
+          ? error.message
+          : "Failed to extract job description."
+      );
+    } finally {
+      setIsExtractingJobDescription(false);
+    }
+  }, [formData.jobUrl]);
+
   const handleAnalyze = useCallback(async () => {
     setIsAnalyzing(true);
+    setExtractError(null);
     setAnalyzeError(null);
     setAnalyzeSuggestions([]);
     setAnalyzeDebugRaw(null);
     setHoveredSuggestionId(null);
     setDiffDocumentTab("resume");
+    const debugContext: {
+      stage: string;
+      endpoint: string;
+      request: {
+        companyName: string;
+        jobTitle: string;
+        jobUrl: string;
+        hasJobDescription: boolean;
+        jobDescriptionChars: number;
+        jobDescriptionPreview: string;
+        maxResumePages: number;
+        allowDeletions: boolean;
+        resumeSummary: {
+          experienceCount: number;
+          projectCount: number;
+          educationCount: number;
+          skillsCount: number;
+        };
+      };
+      response?: {
+        status: number;
+        ok: boolean;
+        rawBodyPreview: string;
+        parsedPayload: unknown;
+      };
+    } = {
+      stage: "request:prepare",
+      endpoint: "/api/tune-resume",
+      request: {
+        companyName: formData.companyName,
+        jobTitle: formData.jobTitle,
+        jobUrl: formData.jobUrl,
+        hasJobDescription: Boolean(formData.jobDescription.trim()),
+        jobDescriptionChars: formData.jobDescription.length,
+        jobDescriptionPreview: formData.jobDescription.slice(0, 1200),
+        maxResumePages: formData.maxResumePages,
+        allowDeletions: formData.allowDeletions,
+        resumeSummary: {
+          experienceCount: resumeData.experience.length,
+          projectCount: resumeData.projects.length,
+          educationCount: resumeData.education.length,
+          skillsCount: resumeData.skills.length,
+        },
+      },
+    };
 
     try {
       const baseResumeForAnalyze = structuredClone(
         withResumeIntegrityGuardrails(resumeData)
       );
+      debugContext.request.resumeSummary = {
+        experienceCount: baseResumeForAnalyze.experience.length,
+        projectCount: baseResumeForAnalyze.projects.length,
+        educationCount: baseResumeForAnalyze.education.length,
+        skillsCount: baseResumeForAnalyze.skills.length,
+      };
+
+      debugContext.stage = "request:send";
       const response = await fetch("/api/tune-resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -642,20 +757,36 @@ export function AppLayout() {
         }),
       });
 
+      debugContext.stage = "response:read";
       const rawText = await response.text();
       let payload: any = {};
       if (rawText) {
+        debugContext.stage = "response:parse-json";
         try {
           payload = JSON.parse(rawText);
         } catch {
+          debugContext.response = {
+            status: response.status,
+            ok: response.ok,
+            rawBodyPreview: rawText.slice(0, 4000),
+            parsedPayload: null,
+          };
           throw new Error("Tune failed. Server returned invalid JSON.");
         }
       }
+      debugContext.response = {
+        status: response.status,
+        ok: response.ok,
+        rawBodyPreview: rawText.slice(0, 4000),
+        parsedPayload: payload ?? null,
+      };
 
       if (!response.ok) {
+        debugContext.stage = "response:non-ok";
         throw new Error(payload?.error || "Failed to tune resume.");
       }
 
+      debugContext.stage = "success";
       setAnalyzeDebugRaw(payload?.raw ?? payload ?? null);
 
       if (payload?.optimizedResume) {
@@ -704,11 +835,19 @@ export function AppLayout() {
       setAnalyzeError(
         error instanceof Error ? error.message : "Failed to tune."
       );
+      setAnalyzeDebugRaw({
+        type: "analyze-failure",
+        timestamp: new Date().toISOString(),
+        ...debugContext,
+        error: {
+          name: error instanceof Error ? error.name : "Error",
+          message: error instanceof Error ? error.message : "Failed to tune.",
+        },
+      });
       setAnalyzeMeta(null);
       setAnalyzeSuggestions([]);
       setAnalyzeBaseResume(null);
       setAnalyzeOptimizedResume(null);
-      setAnalyzeDebugRaw(null);
       setIsDiffViewOpen(false);
       setHoveredSuggestionId(null);
       setDiffDocumentTab("resume");
@@ -1029,35 +1168,423 @@ export function AppLayout() {
     setHoveredSuggestionId(null);
   }, [diffDocumentTab, showDiffView]);
 
+  useEffect(() => {
+    if (showDiffView) {
+      setMobileWorkspaceTab("preview");
+    }
+  }, [showDiffView]);
+
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-background pb-20 md:pb-0">
       <Sidebar onNewApplication={handleNewApplication} />
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Job Input Panel */}
-        <div
-          className={`relative shrink-0 border-r border-border transition-[width] duration-200 ${
-            isLeftPanelOpen ? "w-80" : "w-11"
-          }`}
-        >
-          {isLeftPanelOpen ? (
-            <>
+      <div className="flex min-w-0 flex-1 overflow-hidden">
+        <div className="hidden min-w-0 flex-1 overflow-hidden md:flex">
+          {/* Job Input Panel */}
+          <div
+            className={`relative shrink-0 border-r border-border transition-[width] duration-200 ${
+              isLeftPanelOpen ? "w-80" : "w-11"
+            }`}
+          >
+            {isLeftPanelOpen ? (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-2 top-2 z-20 h-7 w-7"
+                  onClick={() => setIsLeftPanelOpen(false)}
+                  aria-label="Collapse job panel"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <JobInputPanel
+                  formData={formData}
+                  onChange={handleFormDataChange}
+                  onExtractJobDescription={handleExtractJobDescription}
+                  onAnalyze={handleAnalyze}
+                  onSave={handleSave}
+                  isExtractingJobDescription={isExtractingJobDescription}
+                  isAnalyzing={isAnalyzing}
+                  extractError={extractError}
+                  analyzeError={analyzeError}
+                  analyzeMeta={analyzeMeta}
+                  actualResumePages={pageCounts.resumePages}
+                  actualCoverLetterPages={pageCounts.coverLetterPages}
+                  isPrintPreviewMode={pageCounts.isPrintPreviewMode}
+                  analyzeSuggestions={analyzeSuggestions}
+                  onAcceptAnalyzeSuggestion={handleAcceptAnalyzeSuggestion}
+                  onRejectAnalyzeSuggestion={handleRejectAnalyzeSuggestion}
+                  onResetAnalyzeSuggestion={handleResetAnalyzeSuggestion}
+                  onApplyAllAnalyzeSuggestions={handleApplyAllAnalyzeSuggestions}
+                  onDiscardAnalyzeSuggestions={handleDiscardAnalyzeSuggestions}
+                  onResetResume={handleResetResume}
+                />
+              </>
+            ) : (
+              <div className="flex h-full items-start justify-center pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setIsLeftPanelOpen(true)}
+                  aria-label="Open job panel"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* Resume Viewer - flex-1 */}
+          <div className="flex-1 overflow-hidden">
+            {showDiffView && analyzeBaseResume ? (
+              <div className="flex h-full flex-col">
+                <div className="border-b border-border bg-card/40 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-medium text-foreground">
+                        Resume Diff Review
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {visiblePendingSuggestions.length} pending •{" "}
+                        {visibleAcceptedSuggestionCount} approved •{" "}
+                        {visibleRejectedSuggestionCount} denied
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="h-7 px-2 text-[11px]"
+                        onClick={handleApplyAllAnalyzeSuggestions}
+                      >
+                        Approve Safe
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-[11px]"
+                        onClick={() => {
+                          setIsDiffViewOpen(false);
+                          setHoveredSuggestionId(null);
+                        }}
+                      >
+                        Close Diff
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_340px]">
+                  <div className="flex min-h-0 flex-col border-r border-border">
+                    <div className="border-b border-border bg-muted/20 px-3 py-2">
+                      <p className="text-[11px] font-medium text-foreground">
+                        Original Resume
+                      </p>
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                      <ResumeViewer
+                        resumeData={analyzeBaseResume}
+                        onResumeUpdate={handleReadOnlyResumeUpdate}
+                        analysis={null}
+                        onApplySuggestion={handleReadOnlyApplySuggestion}
+                        readOnly
+                        allowCoverLetterTabInReadOnly
+                        autoScaleToFit
+                        documentTab={diffDocumentTab}
+                        onDocumentTabChange={setDiffDocumentTab}
+                        highlightFieldPaths={beforeHighlightPaths}
+                        highlightTone="before"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex min-h-0 flex-col">
+                    <div className="border-b border-border bg-muted/20 px-3 py-2">
+                      <p className="text-[11px] font-medium text-foreground">
+                        Updated Resume
+                      </p>
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                      <ResumeViewer
+                        resumeData={rightPreviewResumeData}
+                        onResumeUpdate={handleResumeUpdate}
+                        analysis={null}
+                        onApplySuggestion={handleReadOnlyApplySuggestion}
+                        readOnly
+                        allowCoverLetterTabInReadOnly
+                        autoScaleToFit
+                        documentTab={diffDocumentTab}
+                        onDocumentTabChange={setDiffDocumentTab}
+                        highlightFieldPaths={afterHighlightPaths}
+                        highlightTone="after"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex min-h-0 flex-col border-l border-border bg-card/20">
+                    <div className="border-b border-border px-3 py-2">
+                      <p className="text-xs font-medium text-foreground">
+                        {diffDocumentTab === "resume"
+                          ? "Resume Diff Suggestions"
+                          : "Cover Letter Diff Suggestions"}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        Hover a suggestion to highlight before/after on both PDFs.
+                      </p>
+                    </div>
+                    <ScrollArea className="min-h-0 flex-1">
+                      <div className="space-y-2 p-3">
+                        {visibleDiffSuggestions.length === 0 ? (
+                          <div className="rounded-md border border-dashed border-border bg-background p-3 text-[11px] text-muted-foreground">
+                            No suggestions for this tab.
+                          </div>
+                        ) : (
+                          visibleDiffSuggestions.map((suggestion) => (
+                            <div
+                              key={suggestion.id}
+                              className={`rounded-md border bg-background p-2 ${
+                                hoveredSuggestionId === suggestion.id
+                                  ? "border-primary/60 ring-1 ring-primary/40"
+                                  : "border-border"
+                              }`}
+                              onMouseEnter={() =>
+                                setHoveredSuggestionId(suggestion.id)
+                              }
+                              onMouseLeave={() =>
+                                setHoveredSuggestionId((current) =>
+                                  current === suggestion.id ? null : current
+                                )
+                              }
+                              onFocus={() => setHoveredSuggestionId(suggestion.id)}
+                              onBlur={() =>
+                                setHoveredSuggestionId((current) =>
+                                  current === suggestion.id ? null : current
+                                )
+                              }
+                              tabIndex={0}
+                            >
+                              <p className="text-[11px] font-medium text-foreground">
+                                {suggestion.label}
+                              </p>
+                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                {suggestion.op.toUpperCase()} • {suggestion.path}
+                              </p>
+                              {suggestion.beforeText ? (
+                                <p className="mt-1 text-[10px] text-muted-foreground line-clamp-2">
+                                  Before: {suggestion.beforeText}
+                                </p>
+                              ) : null}
+                              {suggestion.afterText ? (
+                                <p className="mt-1 text-[10px] text-foreground line-clamp-2">
+                                  After: {suggestion.afterText}
+                                </p>
+                              ) : null}
+                              <div className="mt-2 flex items-center justify-between">
+                                <span className="text-[10px] text-muted-foreground capitalize">
+                                  {suggestion.status}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {suggestion.status === "pending" ? (
+                                    <>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px]"
+                                        onClick={() =>
+                                          handleRejectAnalyzeSuggestion(suggestion.id)
+                                        }
+                                      >
+                                        Deny
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="secondary"
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px]"
+                                        onClick={() =>
+                                          handleAcceptAnalyzeSuggestion(suggestion.id)
+                                        }
+                                        disabled={
+                                          suggestion.op === "delete" &&
+                                          !formData.allowDeletions
+                                        }
+                                      >
+                                        Approve
+                                      </Button>
+                                    </>
+                                  ) : (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 px-2 text-[10px]"
+                                      onClick={() =>
+                                        handleResetAnalyzeSuggestion(suggestion.id)
+                                      }
+                                    >
+                                      Reset
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </div>
+                </div>
+              </div>
+            ) : hasDiffData ? (
+              <div className="flex h-full flex-col">
+                <div className="flex items-center justify-between border-b border-border bg-card/40 px-3 py-2">
+                  <div>
+                    <p className="text-xs font-medium text-foreground">
+                      Diff review is hidden
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {pendingSuggestions.length} pending suggestions are ready for
+                      review.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={() => setIsDiffViewOpen(true)}
+                    >
+                      Open Diff
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={handleDiscardAnalyzeSuggestions}
+                    >
+                      Discard
+                    </Button>
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1">
+                  <ResumeViewer
+                    resumeData={resumeData}
+                    onResumeUpdate={handleResumeUpdate}
+                    analysis={resumeAnalysis}
+                    onApplySuggestion={handleApplySuggestion}
+                    maxResumePages={formData.maxResumePages}
+                    onPageCountChange={setPageCounts}
+                    debugData={analyzeDebugRaw}
+                    onApplyDebugChanges={handleApplyAllAnalyzeSuggestions}
+                  />
+                </div>
+              </div>
+            ) : (
+              <ResumeViewer
+                resumeData={resumeData}
+                onResumeUpdate={handleResumeUpdate}
+                analysis={resumeAnalysis}
+                onApplySuggestion={handleApplySuggestion}
+                maxResumePages={formData.maxResumePages}
+                onPageCountChange={setPageCounts}
+                debugData={analyzeDebugRaw}
+                onApplyDebugChanges={handleApplyAllAnalyzeSuggestions}
+              />
+            )}
+          </div>
+
+          {/* Resume Editor Panel */}
+          <div
+            className={`relative shrink-0 border-l border-border transition-[width] duration-200 ${
+              isRightPanelOpen ? "w-[460px]" : "w-11"
+            }`}
+          >
+            {isRightPanelOpen ? (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute left-2 top-2 z-20 h-7 w-7"
+                  onClick={() => setIsRightPanelOpen(false)}
+                  aria-label="Collapse editor panel"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <ResumeEditorPanel
+                  resumeData={resumeData}
+                  onResumeUpdate={handleResumeUpdate}
+                  onImportResume={handleImportResume}
+                  isImportingResume={isImportingResume}
+                  importError={importError}
+                />
+              </>
+            ) : (
+              <div className="flex h-full items-start justify-center pt-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setIsRightPanelOpen(true)}
+                  aria-label="Open editor panel"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden md:hidden">
+          <div className="border-b border-border bg-card/40 p-2">
+            <div className="grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-muted/40 p-1">
               <Button
                 type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute right-2 top-2 z-20 h-7 w-7"
-                onClick={() => setIsLeftPanelOpen(false)}
-                aria-label="Collapse job panel"
+                size="sm"
+                variant={mobileWorkspaceTab === "job" ? "secondary" : "ghost"}
+                className="h-8 text-xs text-foreground"
+                onClick={() => setMobileWorkspaceTab("job")}
               >
-                <ChevronLeft className="h-4 w-4" />
+                Job
               </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={mobileWorkspaceTab === "preview" ? "secondary" : "ghost"}
+                className="h-8 text-xs text-foreground"
+                onClick={() => setMobileWorkspaceTab("preview")}
+              >
+                Preview
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={mobileWorkspaceTab === "edit" ? "secondary" : "ghost"}
+                className="h-8 text-xs text-foreground"
+                onClick={() => setMobileWorkspaceTab("edit")}
+              >
+                Edit
+              </Button>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {mobileWorkspaceTab === "job" ? (
               <JobInputPanel
                 formData={formData}
-                onChange={setFormData}
+                onChange={handleFormDataChange}
+                onExtractJobDescription={handleExtractJobDescription}
                 onAnalyze={handleAnalyze}
                 onSave={handleSave}
+                isExtractingJobDescription={isExtractingJobDescription}
                 isAnalyzing={isAnalyzing}
+                extractError={extractError}
                 analyzeError={analyzeError}
                 analyzeMeta={analyzeMeta}
                 actualResumePages={pageCounts.resumePages}
@@ -1071,43 +1598,31 @@ export function AppLayout() {
                 onDiscardAnalyzeSuggestions={handleDiscardAnalyzeSuggestions}
                 onResetResume={handleResetResume}
               />
-            </>
-          ) : (
-            <div className="flex h-full items-start justify-center pt-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setIsLeftPanelOpen(true)}
-                aria-label="Open job panel"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* Resume Viewer - flex-1 */}
-        <div className="flex-1 overflow-hidden">
-          {showDiffView && analyzeBaseResume ? (
-            <div className="flex h-full flex-col">
-              <div className="border-b border-border bg-card/40 px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-xs font-medium text-foreground">
-                      Resume Diff Review
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {visiblePendingSuggestions.length} pending • {visibleAcceptedSuggestionCount} approved • {visibleRejectedSuggestionCount} denied
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1">
+            ) : mobileWorkspaceTab === "edit" ? (
+              <ResumeEditorPanel
+                resumeData={resumeData}
+                onResumeUpdate={handleResumeUpdate}
+                onImportResume={handleImportResume}
+                isImportingResume={isImportingResume}
+                importError={importError}
+              />
+            ) : showDiffView && analyzeBaseResume ? (
+              <div className="flex h-full flex-col">
+                <div className="border-b border-border bg-card/40 px-3 py-2">
+                  <p className="text-xs font-medium text-foreground">
+                    Resume Diff Review
+                  </p>
+                  <p className="mt-0.5 text-[10px] text-foreground">
+                    {visiblePendingSuggestions.length} pending •{" "}
+                    {visibleAcceptedSuggestionCount} approved •{" "}
+                    {visibleRejectedSuggestionCount} denied
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
-                      className="h-7 px-2 text-[11px]"
+                      className="h-8 text-[11px]"
                       onClick={handleApplyAllAnalyzeSuggestions}
                     >
                       Approve Safe
@@ -1116,7 +1631,7 @@ export function AppLayout() {
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 text-[11px]"
+                      className="h-8 text-[11px] text-foreground"
                       onClick={() => {
                         setIsDiffViewOpen(false);
                         setHoveredSuggestionId(null);
@@ -1126,260 +1641,231 @@ export function AppLayout() {
                     </Button>
                   </div>
                 </div>
-              </div>
-              <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_340px]">
-                <div className="flex min-h-0 flex-col border-r border-border">
-                  <div className="border-b border-border bg-muted/20 px-3 py-2">
-                    <p className="text-[11px] font-medium text-foreground">
-                      Original Resume
-                    </p>
-                  </div>
-                  <div className="min-h-0 flex-1 overflow-hidden">
-                    <ResumeViewer
-                      resumeData={analyzeBaseResume}
-                      onResumeUpdate={handleReadOnlyResumeUpdate}
-                      analysis={null}
-                      onApplySuggestion={handleReadOnlyApplySuggestion}
-                      readOnly
-                      allowCoverLetterTabInReadOnly
-                      autoScaleToFit
-                      documentTab={diffDocumentTab}
-                      onDocumentTabChange={setDiffDocumentTab}
-                      highlightFieldPaths={beforeHighlightPaths}
-                      highlightTone="before"
-                    />
-                  </div>
-                </div>
-                <div className="flex min-h-0 flex-col">
-                  <div className="border-b border-border bg-muted/20 px-3 py-2">
-                    <p className="text-[11px] font-medium text-foreground">
-                      Updated Resume
-                    </p>
-                  </div>
-                  <div className="min-h-0 flex-1 overflow-hidden">
-                    <ResumeViewer
-                      resumeData={rightPreviewResumeData}
-                      onResumeUpdate={handleResumeUpdate}
-                      analysis={null}
-                      onApplySuggestion={handleReadOnlyApplySuggestion}
-                      readOnly
-                      allowCoverLetterTabInReadOnly
-                      autoScaleToFit
-                      documentTab={diffDocumentTab}
-                      onDocumentTabChange={setDiffDocumentTab}
-                      highlightFieldPaths={afterHighlightPaths}
-                      highlightTone="after"
-                    />
+
+                <div className="border-b border-border bg-background p-2">
+                  <div className="grid grid-cols-3 gap-1 rounded-lg border border-border/70 bg-muted/30 p-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={mobileDiffSection === "original" ? "secondary" : "ghost"}
+                      className="h-8 text-xs text-foreground"
+                      onClick={() => setMobileDiffSection("original")}
+                    >
+                      Original
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={mobileDiffSection === "updated" ? "secondary" : "ghost"}
+                      className="h-8 text-xs text-foreground"
+                      onClick={() => setMobileDiffSection("updated")}
+                    >
+                      Updated
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={
+                        mobileDiffSection === "suggestions" ? "secondary" : "ghost"
+                      }
+                      className="h-8 text-xs text-foreground"
+                      onClick={() => setMobileDiffSection("suggestions")}
+                    >
+                      Suggestions
+                    </Button>
                   </div>
                 </div>
-                <div className="flex min-h-0 flex-col border-l border-border bg-card/20">
-                  <div className="border-b border-border px-3 py-2">
-                    <p className="text-xs font-medium text-foreground">
-                      {diffDocumentTab === "resume"
-                        ? "Resume Diff Suggestions"
-                        : "Cover Letter Diff Suggestions"}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      Hover a suggestion to highlight before/after on both PDFs.
-                    </p>
-                  </div>
-                  <ScrollArea className="min-h-0 flex-1">
-                    <div className="space-y-2 p-3">
-                      {visibleDiffSuggestions.length === 0 ? (
-                        <div className="rounded-md border border-dashed border-border bg-background p-3 text-[11px] text-muted-foreground">
-                          No suggestions for this tab.
-                        </div>
-                      ) : (
-                        visibleDiffSuggestions.map((suggestion) => (
-                        <div
-                          key={suggestion.id}
-                          className={`rounded-md border bg-background p-2 ${
-                            hoveredSuggestionId === suggestion.id
-                              ? "border-primary/60 ring-1 ring-primary/40"
-                              : "border-border"
-                          }`}
-                          onMouseEnter={() => setHoveredSuggestionId(suggestion.id)}
-                          onMouseLeave={() => setHoveredSuggestionId((current) =>
-                            current === suggestion.id ? null : current
-                          )}
-                          onFocus={() => setHoveredSuggestionId(suggestion.id)}
-                          onBlur={() => setHoveredSuggestionId((current) =>
-                            current === suggestion.id ? null : current
-                          )}
-                          tabIndex={0}
-                        >
-                          <p className="text-[11px] font-medium text-foreground">
-                            {suggestion.label}
-                          </p>
-                          <p className="mt-1 text-[10px] text-muted-foreground">
-                            {suggestion.op.toUpperCase()} • {suggestion.path}
-                          </p>
-                          {suggestion.beforeText ? (
-                            <p className="mt-1 text-[10px] text-muted-foreground line-clamp-2">
-                              Before: {suggestion.beforeText}
-                            </p>
-                          ) : null}
-                          {suggestion.afterText ? (
-                            <p className="mt-1 text-[10px] text-foreground line-clamp-2">
-                              After: {suggestion.afterText}
-                            </p>
-                          ) : null}
-                          <div className="mt-2 flex items-center justify-between">
-                            <span className="text-[10px] text-muted-foreground capitalize">
-                              {suggestion.status}
-                            </span>
-                            <div className="flex items-center gap-1">
-                              {suggestion.status === "pending" ? (
-                                <>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-6 px-2 text-[10px]"
-                                    onClick={() =>
-                                      handleRejectAnalyzeSuggestion(suggestion.id)
-                                    }
-                                  >
-                                    Deny
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    size="sm"
-                                    className="h-6 px-2 text-[10px]"
-                                    onClick={() =>
-                                      handleAcceptAnalyzeSuggestion(suggestion.id)
-                                    }
-                                    disabled={
-                                      suggestion.op === "delete" &&
-                                      !formData.allowDeletions
-                                    }
-                                  >
-                                    Approve
-                                  </Button>
-                                </>
-                              ) : (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-6 px-2 text-[10px]"
-                                  onClick={() =>
-                                    handleResetAnalyzeSuggestion(suggestion.id)
-                                  }
-                                >
-                                  Reset
-                                </Button>
-                              )}
-                            </div>
+
+                <div className="min-h-0 flex-1 overflow-hidden">
+                  {mobileDiffSection === "suggestions" ? (
+                    <ScrollArea className="h-full">
+                      <div className="space-y-2 p-3">
+                        <p className="text-[10px] text-foreground">
+                          Tap a suggestion card to highlight corresponding content.
+                        </p>
+                        {visibleDiffSuggestions.length === 0 ? (
+                          <div className="rounded-md border border-dashed border-border bg-background p-3 text-[11px] text-muted-foreground">
+                            No suggestions for this tab.
                           </div>
-                        </div>
-                        ))
-                      )}
-                    </div>
-                  </ScrollArea>
+                        ) : (
+                          visibleDiffSuggestions.map((suggestion) => (
+                            <div
+                              key={suggestion.id}
+                              className={`w-full rounded-md border bg-background p-2 text-left ${
+                                hoveredSuggestionId === suggestion.id
+                                  ? "border-primary/60 ring-1 ring-primary/40"
+                                  : "border-border"
+                              }`}
+                              onClick={() => setHoveredSuggestionId(suggestion.id)}
+                              onFocus={() => setHoveredSuggestionId(suggestion.id)}
+                              onBlur={() =>
+                                setHoveredSuggestionId((current) =>
+                                  current === suggestion.id ? null : current
+                                )
+                              }
+                              tabIndex={0}
+                            >
+                              <p className="text-[11px] font-medium text-foreground">
+                                {suggestion.label}
+                              </p>
+                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                {suggestion.op.toUpperCase()} • {suggestion.path}
+                              </p>
+                              {suggestion.beforeText ? (
+                                <p className="mt-1 text-[10px] text-muted-foreground line-clamp-2">
+                                  Before: {suggestion.beforeText}
+                                </p>
+                              ) : null}
+                              {suggestion.afterText ? (
+                                <p className="mt-1 text-[10px] text-foreground line-clamp-2">
+                                  After: {suggestion.afterText}
+                                </p>
+                              ) : null}
+                              <div className="mt-2 flex items-center justify-between gap-2">
+                                <span className="text-[10px] text-muted-foreground capitalize">
+                                  {suggestion.status}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {suggestion.status === "pending" ? (
+                                    <>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px]"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          handleRejectAnalyzeSuggestion(suggestion.id);
+                                        }}
+                                      >
+                                        Deny
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="secondary"
+                                        size="sm"
+                                        className="h-6 px-2 text-[10px]"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          handleAcceptAnalyzeSuggestion(suggestion.id);
+                                        }}
+                                        disabled={
+                                          suggestion.op === "delete" &&
+                                          !formData.allowDeletions
+                                        }
+                                      >
+                                        Approve
+                                      </Button>
+                                    </>
+                                  ) : (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 px-2 text-[10px]"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleResetAnalyzeSuggestion(suggestion.id);
+                                      }}
+                                    >
+                                      Reset
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </ScrollArea>
+                  ) : (
+                    <ResumeViewer
+                      resumeData={
+                        mobileDiffSection === "original"
+                          ? analyzeBaseResume
+                          : rightPreviewResumeData
+                      }
+                      onResumeUpdate={
+                        mobileDiffSection === "original"
+                          ? handleReadOnlyResumeUpdate
+                          : handleResumeUpdate
+                      }
+                      analysis={null}
+                      onApplySuggestion={handleReadOnlyApplySuggestion}
+                      readOnly
+                      allowCoverLetterTabInReadOnly
+                      autoScaleToFit
+                      documentTab={diffDocumentTab}
+                      onDocumentTabChange={setDiffDocumentTab}
+                      highlightFieldPaths={
+                        mobileDiffSection === "original"
+                          ? beforeHighlightPaths
+                          : afterHighlightPaths
+                      }
+                      highlightTone={
+                        mobileDiffSection === "original" ? "before" : "after"
+                      }
+                    />
+                  )}
                 </div>
               </div>
-            </div>
-          ) : hasDiffData ? (
-            <div className="flex h-full flex-col">
-              <div className="flex items-center justify-between border-b border-border bg-card/40 px-3 py-2">
-                <div>
+            ) : hasDiffData ? (
+              <div className="flex h-full flex-col">
+                <div className="border-b border-border bg-card/40 px-3 py-2">
                   <p className="text-xs font-medium text-foreground">
                     Diff review is hidden
                   </p>
-                  <p className="text-[10px] text-muted-foreground">
-                    {pendingSuggestions.length} pending suggestions are ready for review.
+                  <p className="text-[10px] text-foreground">
+                    {pendingSuggestions.length} pending suggestions are ready for
+                    review.
                   </p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-8 flex-1 text-[11px]"
+                      onClick={() => setIsDiffViewOpen(true)}
+                    >
+                      Open Diff
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 flex-1 text-[11px] text-foreground"
+                      onClick={handleDiscardAnalyzeSuggestions}
+                    >
+                      Discard
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="h-7 px-2 text-[11px]"
-                    onClick={() => setIsDiffViewOpen(true)}
-                  >
-                    Open Diff
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-[11px]"
-                    onClick={handleDiscardAnalyzeSuggestions}
-                  >
-                    Discard
-                  </Button>
+                <div className="min-h-0 flex-1">
+                  <ResumeViewer
+                    resumeData={resumeData}
+                    onResumeUpdate={handleResumeUpdate}
+                    analysis={resumeAnalysis}
+                    onApplySuggestion={handleApplySuggestion}
+                    maxResumePages={formData.maxResumePages}
+                    onPageCountChange={setPageCounts}
+                    debugData={analyzeDebugRaw}
+                    onApplyDebugChanges={handleApplyAllAnalyzeSuggestions}
+                  />
                 </div>
               </div>
-              <div className="min-h-0 flex-1">
-                <ResumeViewer
-                  resumeData={resumeData}
-                  onResumeUpdate={handleResumeUpdate}
-                  analysis={resumeAnalysis}
-                  onApplySuggestion={handleApplySuggestion}
-                  maxResumePages={formData.maxResumePages}
-                  onPageCountChange={setPageCounts}
-                  debugData={analyzeDebugRaw}
-                  onApplyDebugChanges={handleApplyAllAnalyzeSuggestions}
-                />
-              </div>
-            </div>
-          ) : (
-            <ResumeViewer
-              resumeData={resumeData}
-              onResumeUpdate={handleResumeUpdate}
-              analysis={resumeAnalysis}
-              onApplySuggestion={handleApplySuggestion}
-              maxResumePages={formData.maxResumePages}
-              onPageCountChange={setPageCounts}
-              debugData={analyzeDebugRaw}
-              onApplyDebugChanges={handleApplyAllAnalyzeSuggestions}
-            />
-          )}
-        </div>
-
-        {/* Resume Editor Panel */}
-        <div
-          className={`relative shrink-0 border-l border-border transition-[width] duration-200 ${
-            isRightPanelOpen ? "w-[460px]" : "w-11"
-          }`}
-        >
-          {isRightPanelOpen ? (
-            <>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="absolute left-2 top-2 z-20 h-7 w-7"
-                onClick={() => setIsRightPanelOpen(false)}
-                aria-label="Collapse editor panel"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <ResumeEditorPanel
+            ) : (
+              <ResumeViewer
                 resumeData={resumeData}
                 onResumeUpdate={handleResumeUpdate}
-                onImportResume={handleImportResume}
-                isImportingResume={isImportingResume}
-                importError={importError}
+                analysis={resumeAnalysis}
+                onApplySuggestion={handleApplySuggestion}
+                maxResumePages={formData.maxResumePages}
+                onPageCountChange={setPageCounts}
+                debugData={analyzeDebugRaw}
+                onApplyDebugChanges={handleApplyAllAnalyzeSuggestions}
               />
-            </>
-          ) : (
-            <div className="flex h-full items-start justify-center pt-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setIsRightPanelOpen(true)}
-                aria-label="Open editor panel"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>

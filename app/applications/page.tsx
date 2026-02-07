@@ -64,11 +64,11 @@ export default function ApplicationsPage() {
   });
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-background pb-20 md:pb-0">
       <Sidebar />
 
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex items-center gap-4 border-b border-border px-6 py-4">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex items-center gap-3 border-b border-border px-4 py-3 md:gap-4 md:px-6 md:py-4">
           <Button variant="ghost" size="icon" asChild>
             <Link href="/">
               <ArrowLeft className="h-4 w-4" />
@@ -79,7 +79,7 @@ export default function ApplicationsPage() {
         </header>
 
         <ScrollArea className="flex-1">
-          <div className="p-6">
+          <div className="p-4 md:p-6">
             {isLoading ? (
               <div className="flex items-center justify-center py-12">
                 <p className="text-muted-foreground">Loading applications...</p>
@@ -103,7 +103,7 @@ export default function ApplicationsPage() {
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search by company, title, or job description..."
-                  className="max-w-md"
+                  className="w-full max-w-md"
                 />
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {filteredApplications.map((app) => (

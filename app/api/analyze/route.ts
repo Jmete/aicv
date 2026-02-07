@@ -5,8 +5,9 @@ import path from "node:path";
 import net from "node:net";
 import { z } from "zod";
 import { generateObject } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { AI_MODELS } from "@/lib/ai-models";
 import { estimateWrappedLineCount } from "@/lib/line-constraints";
+import { createId } from "@/lib/id";
 import { DEFAULT_PAGE_SETTINGS, PAPER_DIMENSIONS } from "@/lib/resume-defaults";
 import type { FontFamily, ResumeData } from "@/types";
 
@@ -504,7 +505,7 @@ const applyDraft = (base: ResumeData, draft: AiDraft, valid: Set<string>) => {
       seenSkillNames.add(key);
       return true;
     })
-    .map((name) => ({ id: crypto.randomUUID(), name, category: "" }));
+    .map((name) => ({ id: createId(), name, category: "" }));
   if (skillRows.length) next.skills = skillRows;
   const paragraphs = draft.coverLetter.paragraphs.filter((p) => good(p.evidenceIds)).map((p) => sanitize(p.text)).filter(Boolean);
   const normalizedCoverLetterDate = normalizeCoverLetterDate(
@@ -616,7 +617,7 @@ export async function POST(request: Request) {
     let prev: AiDraft | null = null;
     for (let attempt = 1; attempt <= MAX_OPT_ATTEMPTS; attempt += 1) {
       const draftResult = (await generateObject({
-        model: openai("gpt-5-nano"),
+        model: AI_MODELS.resumeAnalyze,
         system,
         prompt: [basePrompt, prev ? `Previous draft:\n${JSON.stringify(prev, null, 2)}` : "", fix].filter(Boolean).join("\n\n"),
         schema: aiSchema,

@@ -5,19 +5,22 @@ import path from "node:path";
 import net from "node:net";
 import { z } from "zod";
 import { generateObject } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { AI_MODELS } from "@/lib/ai-models";
 import { estimateWrappedLineCount } from "@/lib/line-constraints";
+import { createId } from "@/lib/id";
 import { DEFAULT_PAGE_SETTINGS, PAPER_DIMENSIONS } from "@/lib/resume-defaults";
 import type { FontFamily, ResumeData } from "@/types";
 
 export const runtime = "nodejs";
 
 const MAX_JD_CHARS = 16_000;
-const MAX_OPT_ATTEMPTS = 4;
+const MAX_OPT_ATTEMPTS = 3;
 const COVER_LETTER_MAX_PAGES = 1;
 const SCRAPE_TIMEOUT_MS = 10_000;
 const SCRAPE_MAX_HTML_BYTES = 450_000;
 const SCRAPE_MAX_TEXT_CHARS = 12_000;
+const MODEL_TIMEOUT_MS = 90_000;
+const MODEL_RETRY_LIMIT = 3;
 
 const STOP_WORDS = new Set([
   "and",
@@ -568,6 +571,79 @@ const scrapeText = async (url: string) => {
 const getPrompt = async () =>
   readFile(path.join(process.cwd(), "lib", "prompts", "tune-resume.md"), "utf8");
 
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const isTransientModelError = (error: unknown) => {
+  const domName =
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    typeof (error as { name: unknown }).name === "string"
+      ? String((error as { name: string }).name).toLowerCase()
+      : "";
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  return (
+    domName === "aborterror" ||
+    message.includes("load failed") ||
+    message.includes("failed to fetch") ||
+    message.includes("aborted") ||
+    message.includes("network") ||
+    message.includes("timeout") ||
+    message.includes("timed out") ||
+    message.includes("econnreset") ||
+    message.includes("econnrefused") ||
+    message.includes("503") ||
+    message.includes("502") ||
+    message.includes("429")
+  );
+};
+
+const summarizeDraft = (draft: AiDraft) => ({
+  summaryChars: sanitize(draft.metadata.summary.text).length,
+  experienceEntries: draft.experience.length,
+  projectEntries: draft.projects.length,
+  skillCount: draft.skills.length,
+  coverLetterParagraphs: draft.coverLetter.paragraphs.length,
+});
+
+const generateDraftWithRetry = async (options: {
+  system: string;
+  prompt: string;
+}) => {
+  let lastError: unknown = null;
+  for (let retry = 1; retry <= MODEL_RETRY_LIMIT; retry += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+    try {
+      return (await generateObject({
+        model: AI_MODELS.resumeTune,
+        system: options.system,
+        prompt: options.prompt,
+        schema: aiSchema,
+        abortSignal: controller.signal,
+      })) as { object: { optimized: AiDraft } };
+    } catch (error) {
+      lastError = error;
+      const shouldRetry = retry < MODEL_RETRY_LIMIT && isTransientModelError(error);
+      if (!shouldRetry) throw error;
+      await wait(500 * retry);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  if (
+    typeof lastError === "object" &&
+    lastError !== null &&
+    "name" in lastError &&
+    String((lastError as { name?: unknown }).name).toLowerCase() ===
+      "aborterror"
+  ) {
+    throw new Error("Model request timed out.");
+  }
+  throw lastError instanceof Error ? lastError : new Error("Model request failed.");
+};
+
 const estimates = (resume: ResumeData) => {
   const paper = PAPER_DIMENSIONS[resume.pageSettings.paperSize];
   const rm = resume.pageSettings.resumeMargins ?? resume.pageSettings.margins ?? DEFAULT_PAGE_SETTINGS.resumeMargins;
@@ -739,7 +815,7 @@ const applyDraft = (
       .map((skill) => {
         const existing = baseSkillByName.get(normalizeSkillName(skill.name));
         return {
-          id: existing?.id ?? crypto.randomUUID(),
+          id: existing?.id ?? createId(),
           name: skill.name,
           category: skill.category || existing?.category || "",
         };
@@ -774,7 +850,7 @@ const applyDraft = (
       if (seen.has(key)) continue;
       seen.add(key);
       appended.push({
-        id: crypto.randomUUID(),
+        id: createId(),
         name: skill.name,
         category: skill.category || "",
       });
@@ -1016,7 +1092,7 @@ export async function POST(request: Request) {
     const rawUrl = sanitize(data.jobUrl);
     let scraped = "";
     let scrapeWarning: string | null = null;
-    if (rawUrl) {
+    if (rawUrl && !manual) {
       try {
         scraped = await scrapeText(await safeUrl(rawUrl));
       } catch (e) {
@@ -1125,7 +1201,6 @@ export async function POST(request: Request) {
       resume: ResumeData;
       est: { resumePages: number; coverLetterPages: number };
       attempt: number;
-      draft: AiDraft;
       metaByPath: Map<string, RewriteMeta>;
     } | null = null;
     const debugAttempts: Array<{
@@ -1133,19 +1208,26 @@ export async function POST(request: Request) {
       invalidEvidenceIds: string[];
       estimation?: { resumePages: number; coverLetterPages: number };
       withinLimit?: boolean;
-      draft: AiDraft;
+      draftSummary: {
+        summaryChars: number;
+        experienceEntries: number;
+        projectEntries: number;
+        skillCount: number;
+        coverLetterParagraphs: number;
+      };
     }> = [];
     let fix = "";
-    let prev: AiDraft | null = null;
     for (let attempt = 1; attempt <= MAX_OPT_ATTEMPTS; attempt += 1) {
-      const draftResult = (await generateObject({
-        model: openai("gpt-5-nano"),
+      const draftResult = await generateDraftWithRetry({
         system,
-        prompt: [basePrompt, prev ? `Previous draft:\n${JSON.stringify(prev, null, 2)}` : "", fix].filter(Boolean).join("\n\n"),
-        schema: aiSchema,
-      })) as { object: { optimized: AiDraft } };
+        prompt: [
+          basePrompt,
+          fix,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      });
       const draft = draftResult.object.optimized;
-      prev = draft;
       const invalid = [
         ...new Set(
           [
@@ -1161,7 +1243,7 @@ export async function POST(request: Request) {
         debugAttempts.push({
           attempt,
           invalidEvidenceIds: invalid,
-          draft,
+          draftSummary: summarizeDraft(draft),
         });
         fix = `Unsupported evidence IDs were used: ${invalid.join(", ")}. Use only provided claim IDs.`;
         continue;
@@ -1181,7 +1263,7 @@ export async function POST(request: Request) {
         invalidEvidenceIds: [],
         estimation: { resumePages: est.resumePages, coverLetterPages: est.coverLetterPages },
         withinLimit,
-        draft,
+        draftSummary: summarizeDraft(draft),
       });
       if (
         !best ||
@@ -1192,7 +1274,6 @@ export async function POST(request: Request) {
           resume: candidate,
           est: { resumePages: est.resumePages, coverLetterPages: est.coverLetterPages },
           attempt,
-          draft,
           metaByPath: applied.metaByPath,
         };
       }
@@ -1274,7 +1355,6 @@ export async function POST(request: Request) {
           selectedAttempt: best.attempt,
           selectedEstimation: best.est,
           fitError,
-          selectedDraft: best.draft,
         },
       });
     }
@@ -1296,9 +1376,22 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     console.error("Error tuning resume:", error);
+    const rawMessage =
+      error instanceof Error ? error.message : "Failed to tune resume.";
+    const normalized = rawMessage.toLowerCase();
+    const isConnectionFailure =
+      normalized.includes("model request timed out") ||
+      normalized.includes("aborted") ||
+      normalized.includes("load failed") ||
+      normalized.includes("failed to fetch") ||
+      normalized.includes("network") ||
+      normalized.includes("timeout");
+    const message = isConnectionFailure
+      ? "Analyze failed due to an AI connection timeout. Please retry. If it keeps happening, shorten the job description or remove the job URL and paste text directly."
+      : rawMessage;
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to tune resume." },
-      { status: 500 }
+      { error: message },
+      { status: isConnectionFailure ? 502 : 500 }
     );
   }
 }

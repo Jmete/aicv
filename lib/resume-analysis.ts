@@ -1,5 +1,6 @@
 import type { ResumeData } from "@/types";
 import type { ResumeImportContent } from "@/types";
+import { createId } from "@/lib/id";
 
 const PATH_REGEX = /([^[.\]]+)|\[(\d+)\]/g;
 
@@ -56,8 +57,6 @@ const ensureContact = (value: ResumeImportContent["metadata"]["contactInfo"]) =>
   website: safeString(value?.website),
   github: safeString(value?.github),
 });
-
-const createId = () => (typeof crypto !== "undefined" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
 
 export const buildResumeDataFromImport = (
   base: ResumeData,

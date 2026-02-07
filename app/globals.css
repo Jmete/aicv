@@ -13,7 +13,7 @@
   --secondary: 35 17% 93%;
   --secondary-foreground: 20 14% 12%;
   --muted: 35 17% 93%;
-  --muted-foreground: 25 5% 45%;
+  --muted-foreground: 25 7% 34%;
   --accent: 35 17% 93%;
   --accent-foreground: 20 14% 12%;
   --destructive: 0 84% 60%;
@@ -103,6 +103,27 @@ body {
 
 .dark .document-paper {
   --paper: 0 0% 100%;
+}
+
+/* Keep white-paper typography readable even when app theme is dark. */
+.dark .document-paper .dark\:text-gray-100 {
+  color: rgb(17 24 39) !important;
+}
+
+.dark .document-paper .dark\:text-gray-300 {
+  color: rgb(55 65 81) !important;
+}
+
+.dark .document-paper .dark\:text-gray-400 {
+  color: rgb(75 85 99) !important;
+}
+
+.dark .document-paper .dark\:border-gray-700 {
+  border-color: rgb(209 213 219) !important;
+}
+
+.dark .document-paper .dark\:hover\:text-gray-100:hover {
+  color: rgb(17 24 39) !important;
 }
 
 /* Focus visible styling */
