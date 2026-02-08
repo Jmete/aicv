@@ -20,9 +20,39 @@ export interface ApplicationFormData {
   jobDescription: string;
 }
 
-export interface ExtractedRequirement {
-  requirement: string;
+export type AtomicUnitType =
+  | "tool"
+  | "platform"
+  | "method"
+  | "responsibility"
+  | "domain"
+  | "governance"
+  | "leadership"
+  | "commercial"
+  | "education"
+  | "constraint";
+
+export type CoverageStatus = "explicit" | "partial" | "none";
+export type Feasibility = "feasible" | "maybe" | "not_feasible";
+
+export interface MatchedResumeRef {
+  path: string;
+  resumeId: string;
+  excerpt: string;
+  matchStrength: number;
+}
+
+export interface ExtractedAtomicUnit {
+  id: string;
+  canonical: string;
+  type: AtomicUnitType;
   weight: number;
+  mustHave: boolean;
+  coverageStatus: CoverageStatus;
+  feasibility: Feasibility;
+  matchedResumeRefs: MatchedResumeRef[];
+  recommendedTargetPaths: string[];
+  gaps: string[];
 }
 
 const initialFormData: ApplicationFormData = {
@@ -35,6 +65,160 @@ const normalizeComparable = (value: string) =>
 
 const hasText = (value: string | undefined | null) =>
   typeof value === "string" && normalizeComparable(value).length > 0;
+
+const clampWeight = (value: number) =>
+  Math.max(0, Math.min(100, Math.round(value)));
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const ATOMIC_UNIT_TYPES: AtomicUnitType[] = [
+  "tool",
+  "platform",
+  "method",
+  "responsibility",
+  "domain",
+  "governance",
+  "leadership",
+  "commercial",
+  "education",
+  "constraint",
+];
+
+const COVERAGE_STATUSES: CoverageStatus[] = ["explicit", "partial", "none"];
+const FEASIBILITY_VALUES: Feasibility[] = ["feasible", "maybe", "not_feasible"];
+
+const isAtomicUnitType = (value: unknown): value is AtomicUnitType =>
+  typeof value === "string" &&
+  ATOMIC_UNIT_TYPES.includes(value as AtomicUnitType);
+
+const isCoverageStatus = (value: unknown): value is CoverageStatus =>
+  typeof value === "string" &&
+  COVERAGE_STATUSES.includes(value as CoverageStatus);
+
+const isFeasibility = (value: unknown): value is Feasibility =>
+  typeof value === "string" &&
+  FEASIBILITY_VALUES.includes(value as Feasibility);
+
+const normalizeStringArray = (
+  values: unknown,
+  maxItems: number,
+  maxLength: number
+) => {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const normalized = normalizeComparable(value).slice(0, maxLength);
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(normalized);
+    if (output.length >= maxItems) break;
+  }
+  return output;
+};
+
+const normalizeMatchedResumeRefs = (values: unknown): MatchedResumeRef[] => {
+  if (!Array.isArray(values)) return [];
+  const deduped = new Map<string, MatchedResumeRef>();
+  for (const value of values) {
+    if (!isObject(value)) continue;
+    const pathValue = value.path;
+    const excerptValue = value.excerpt;
+    const resumeIdValue = value.resumeId;
+    const matchStrengthValue = value.matchStrength;
+    if (
+      typeof pathValue !== "string" ||
+      typeof excerptValue !== "string" ||
+      typeof resumeIdValue !== "string" ||
+      typeof matchStrengthValue !== "number"
+    ) {
+      continue;
+    }
+    const path = normalizeComparable(pathValue).slice(0, 220);
+    const excerpt = normalizeComparable(excerptValue).slice(0, 240);
+    if (!path && !excerpt) continue;
+    const normalized = {
+      path,
+      resumeId: normalizeComparable(resumeIdValue).slice(0, 80),
+      excerpt,
+      matchStrength: Math.max(
+        0,
+        Math.min(1, Math.round(matchStrengthValue * 1000) / 1000)
+      ),
+    };
+    const key = `${normalized.path.toLowerCase()}|${normalized.excerpt.toLowerCase()}`;
+    const existing = deduped.get(key);
+    if (!existing || normalized.matchStrength > existing.matchStrength) {
+      deduped.set(key, normalized);
+    }
+  }
+  return Array.from(deduped.values())
+    .sort((a, b) => b.matchStrength - a.matchStrength)
+    .slice(0, 3);
+};
+
+const normalizeAtomicUnits = (items: unknown[]): ExtractedAtomicUnit[] => {
+  const deduped = new Map<string, ExtractedAtomicUnit>();
+  for (const item of items) {
+    if (!isObject(item)) continue;
+    const idValue = item.id;
+    const canonicalValue = item.canonical;
+    const typeValue = item.type;
+    const weightValue = item.weight;
+    const mustHaveValue = item.mustHave;
+    const coverageStatusValue = item.coverageStatus;
+    const feasibilityValue = item.feasibility;
+    if (
+      typeof idValue !== "string" ||
+      typeof canonicalValue !== "string" ||
+      typeof weightValue !== "number" ||
+      typeof mustHaveValue !== "boolean" ||
+      !isCoverageStatus(coverageStatusValue) ||
+      !isFeasibility(feasibilityValue) ||
+      !isAtomicUnitType(typeValue)
+    ) {
+      continue;
+    }
+    const id = normalizeComparable(idValue);
+    const canonical = normalizeComparable(canonicalValue);
+    if (!id || !canonical) continue;
+    const next = {
+      id,
+      canonical,
+      type: typeValue,
+      weight: clampWeight(weightValue),
+      mustHave: mustHaveValue,
+      coverageStatus: coverageStatusValue,
+      feasibility: feasibilityValue,
+      matchedResumeRefs: normalizeMatchedResumeRefs(item.matchedResumeRefs),
+      recommendedTargetPaths: normalizeStringArray(
+        item.recommendedTargetPaths,
+        10,
+        220
+      ),
+      gaps: normalizeStringArray(item.gaps, 10, 160),
+    };
+    const key = canonical.toLowerCase();
+    const existing = deduped.get(key);
+    if (!existing || next.weight > existing.weight) {
+      deduped.set(key, next);
+    }
+  }
+  return Array.from(deduped.values()).sort((a, b) => {
+    if (b.weight !== a.weight) return b.weight - a.weight;
+    return a.canonical.localeCompare(b.canonical);
+  });
+};
+
+const extractAtomicUnitsFromPayload = (payload: unknown) => {
+  if (!isObject(payload)) return [];
+  if (!Array.isArray(payload.atomicUnits)) return [];
+  return normalizeAtomicUnits(payload.atomicUnits);
+};
 
 const ensureUniqueIds = <T extends { id: string }>(items: T[]): T[] => {
   const seen = new Set<string>();
@@ -61,14 +245,17 @@ export function AppLayout() {
   const [isExtractingJobDescription, setIsExtractingJobDescription] =
     useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
-  const [extractedRequirements, setExtractedRequirements] = useState<
-    ExtractedRequirement[]
+  const [extractedAtomicUnits, setExtractedAtomicUnits] = useState<
+    ExtractedAtomicUnit[]
   >([]);
   const [isExtractingRequirements, setIsExtractingRequirements] =
     useState(false);
   const [requirementsError, setRequirementsError] = useState<string | null>(
     null
   );
+  const [requirementsDebugPayload, setRequirementsDebugPayload] = useState<
+    unknown | null
+  >(null);
   const [defaultResumeData, setDefaultResumeData] =
     useState<ResumeData>(DEFAULT_RESUME_DATA);
   const [resumeData, setResumeData] = useState<ResumeData>(DEFAULT_RESUME_DATA);
@@ -98,7 +285,8 @@ export function AppLayout() {
     setIsExtractingRequirements(false);
     setExtractError(null);
     setRequirementsError(null);
-    setExtractedRequirements([]);
+    setExtractedAtomicUnits([]);
+    setRequirementsDebugPayload(null);
     setResumeData(defaultResumeData);
     setResumeAnalysis(null);
     setImportError(null);
@@ -123,7 +311,8 @@ export function AppLayout() {
         normalizeComparable(data.jobDescription) !==
         normalizeComparable(formData.jobDescription)
       ) {
-        setExtractedRequirements([]);
+        setExtractedAtomicUnits([]);
+        setRequirementsDebugPayload(null);
       }
       setFormData(data);
       setExtractError(null);
@@ -193,8 +382,9 @@ export function AppLayout() {
         ...current,
         jobDescription: payload.jobDescription,
       }));
-      setExtractedRequirements([]);
+      setExtractedAtomicUnits([]);
       setRequirementsError(null);
+      setRequirementsDebugPayload(null);
     } catch (error) {
       console.error("Error extracting job description:", error);
       setExtractError(
@@ -216,12 +406,13 @@ export function AppLayout() {
 
     setIsExtractingRequirements(true);
     setRequirementsError(null);
+    setRequirementsDebugPayload(null);
 
     try {
       const response = await fetch("/api/extract-requirements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobDescription }),
+        body: JSON.stringify({ jobDescription, resumeData }),
       });
       const rawText = await response.text();
       let payload: any = {};
@@ -232,13 +423,15 @@ export function AppLayout() {
           throw new Error("Requirement extraction failed. Invalid JSON.");
         }
       }
+      setRequirementsDebugPayload(payload);
       if (!response.ok) {
         throw new Error(payload?.error || "Failed to extract requirements.");
       }
-      if (!Array.isArray(payload?.requirements)) {
+      const parsedAtomicUnits = extractAtomicUnitsFromPayload(payload);
+      if (!parsedAtomicUnits.length) {
         throw new Error("Extraction failed. No requirements were returned.");
       }
-      setExtractedRequirements(payload.requirements as ExtractedRequirement[]);
+      setExtractedAtomicUnits(parsedAtomicUnits);
     } catch (error) {
       console.error("Error extracting requirements:", error);
       setRequirementsError(
@@ -247,7 +440,7 @@ export function AppLayout() {
     } finally {
       setIsExtractingRequirements(false);
     }
-  }, [formData.jobDescription]);
+  }, [formData.jobDescription, resumeData]);
 
   const handleImportResume = useCallback(async (file: File) => {
     setIsImportingResume(true);
@@ -414,8 +607,9 @@ export function AppLayout() {
                   extractError={extractError}
                   onExtractRequirements={handleExtractRequirements}
                   isExtractingRequirements={isExtractingRequirements}
-                  requirements={extractedRequirements}
+                  atomicUnits={extractedAtomicUnits}
                   requirementsError={requirementsError}
+                  requirementsDebugPayload={requirementsDebugPayload}
                   isDiffViewOpen={showDiffView}
                   onToggleDiffView={handleToggleDiffView}
                   onResetResume={handleResetResume}
@@ -651,8 +845,9 @@ export function AppLayout() {
                 extractError={extractError}
                 onExtractRequirements={handleExtractRequirements}
                 isExtractingRequirements={isExtractingRequirements}
-                requirements={extractedRequirements}
+                atomicUnits={extractedAtomicUnits}
                 requirementsError={requirementsError}
+                requirementsDebugPayload={requirementsDebugPayload}
                 isDiffViewOpen={showDiffView}
                 onToggleDiffView={handleToggleDiffView}
                 onResetResume={handleResetResume}

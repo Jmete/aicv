@@ -1,8 +1,9 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import type {
   ApplicationFormData,
-  ExtractedRequirement,
+  ExtractedAtomicUnit,
 } from "@/components/layout/app-layout";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,8 +19,9 @@ interface JobInputPanelProps {
   extractError: string | null;
   onExtractRequirements: () => void;
   isExtractingRequirements: boolean;
-  requirements: ExtractedRequirement[];
+  atomicUnits: ExtractedAtomicUnit[];
   requirementsError: string | null;
+  requirementsDebugPayload: unknown | null;
   isDiffViewOpen: boolean;
   onToggleDiffView: () => void;
   onResetResume: () => void;
@@ -33,14 +35,23 @@ export function JobInputPanel({
   extractError,
   onExtractRequirements,
   isExtractingRequirements,
-  requirements,
+  atomicUnits,
   requirementsError,
+  requirementsDebugPayload,
   isDiffViewOpen,
   onToggleDiffView,
   onResetResume,
 }: JobInputPanelProps) {
   const canExtract = Boolean(formData.jobUrl.trim());
   const canExtractRequirements = Boolean(formData.jobDescription.trim());
+  const [isDebugOpen, setIsDebugOpen] = useState(false);
+  const debugJson = useMemo(
+    () =>
+      requirementsDebugPayload
+        ? JSON.stringify(requirementsDebugPayload, null, 2)
+        : "",
+    [requirementsDebugPayload]
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -136,27 +147,77 @@ export function JobInputPanel({
             <p className="text-xs font-semibold tracking-wide text-foreground">
               Prioritized Requirements
             </p>
-            {requirements.length > 0 ? (
-              <ol className="mt-2 space-y-1.5">
-                {requirements.map((item, index) => (
-                  <li
-                    key={`${item.requirement}-${index}`}
-                    className="flex items-start justify-between gap-3 rounded-sm border border-border/40 bg-background/80 px-2 py-1.5 text-[11px]"
+            {atomicUnits.length > 0 ? (
+              <div className="mt-2 grid grid-cols-1 gap-2">
+                {atomicUnits.map((item, index) => (
+                  <article
+                    key={`${item.id}-${index}`}
+                    className="rounded-md border border-border/50 bg-background/90 p-2"
                   >
-                    <span className="min-w-0 text-foreground">
-                      {index + 1}. {item.requirement}
-                    </span>
-                    <span className="shrink-0 rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5 font-medium text-muted-foreground">
-                      {item.weight}
-                    </span>
-                  </li>
+                    <p className="truncate text-[11px] font-semibold text-foreground">
+                      {item.canonical}
+                    </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
+                        type: {item.type}
+                      </span>
+                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
+                        weight: {item.weight}
+                      </span>
+                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
+                        must_have: {item.mustHave ? "true" : "false"}
+                      </span>
+                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
+                        coverage: {item.coverageStatus}
+                      </span>
+                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
+                        feasibility: {item.feasibility}
+                      </span>
+                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
+                        matches: {item.matchedResumeRefs.length}
+                      </span>
+                    </div>
+                    {item.gaps.length > 0 ? (
+                      <p className="mt-1 truncate text-[10px] text-muted-foreground">
+                        gap: {item.gaps[0]}
+                      </p>
+                    ) : null}
+                  </article>
                 ))}
-              </ol>
+              </div>
             ) : (
               <p className="mt-2 text-[11px] text-muted-foreground">
                 Click &quot;Extract Requirements&quot; to generate a weighted list.
               </p>
             )}
+            <div className="mt-3 border-t border-border/60 pt-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Debug JSON
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[10px]"
+                  onClick={() => setIsDebugOpen((current) => !current)}
+                  disabled={!requirementsDebugPayload}
+                >
+                  {isDebugOpen ? "Hide" : "Show"}
+                </Button>
+              </div>
+              {requirementsDebugPayload ? (
+                isDebugOpen ? (
+                  <pre className="mt-2 max-h-56 overflow-auto rounded-sm border border-border/50 bg-background/90 p-2 font-mono text-[10px] leading-relaxed text-foreground">
+                    {debugJson}
+                  </pre>
+                ) : null
+              ) : (
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Run extraction to inspect API JSON.
+                </p>
+              )}
+            </div>
           </div>
 
           {extractError ? (
