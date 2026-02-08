@@ -20,6 +20,11 @@ export interface ApplicationFormData {
   jobDescription: string;
 }
 
+export interface ExtractedRequirement {
+  requirement: string;
+  weight: number;
+}
+
 const initialFormData: ApplicationFormData = {
   jobUrl: "",
   jobDescription: "",
@@ -56,6 +61,14 @@ export function AppLayout() {
   const [isExtractingJobDescription, setIsExtractingJobDescription] =
     useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
+  const [extractedRequirements, setExtractedRequirements] = useState<
+    ExtractedRequirement[]
+  >([]);
+  const [isExtractingRequirements, setIsExtractingRequirements] =
+    useState(false);
+  const [requirementsError, setRequirementsError] = useState<string | null>(
+    null
+  );
   const [defaultResumeData, setDefaultResumeData] =
     useState<ResumeData>(DEFAULT_RESUME_DATA);
   const [resumeData, setResumeData] = useState<ResumeData>(DEFAULT_RESUME_DATA);
@@ -82,7 +95,10 @@ export function AppLayout() {
   const handleNewApplication = useCallback(() => {
     setFormData(initialFormData);
     setIsExtractingJobDescription(false);
+    setIsExtractingRequirements(false);
     setExtractError(null);
+    setRequirementsError(null);
+    setExtractedRequirements([]);
     setResumeData(defaultResumeData);
     setResumeAnalysis(null);
     setImportError(null);
@@ -101,10 +117,20 @@ export function AppLayout() {
     setResumeData(withResumeIntegrityGuardrails(data));
   }, []);
 
-  const handleFormDataChange = useCallback((data: ApplicationFormData) => {
-    setFormData(data);
-    setExtractError(null);
-  }, []);
+  const handleFormDataChange = useCallback(
+    (data: ApplicationFormData) => {
+      if (
+        normalizeComparable(data.jobDescription) !==
+        normalizeComparable(formData.jobDescription)
+      ) {
+        setExtractedRequirements([]);
+      }
+      setFormData(data);
+      setExtractError(null);
+      setRequirementsError(null);
+    },
+    [formData.jobDescription]
+  );
 
   useEffect(() => {
     let isActive = true;
@@ -167,6 +193,8 @@ export function AppLayout() {
         ...current,
         jobDescription: payload.jobDescription,
       }));
+      setExtractedRequirements([]);
+      setRequirementsError(null);
     } catch (error) {
       console.error("Error extracting job description:", error);
       setExtractError(
@@ -178,6 +206,48 @@ export function AppLayout() {
       setIsExtractingJobDescription(false);
     }
   }, [formData.jobUrl]);
+
+  const handleExtractRequirements = useCallback(async () => {
+    const jobDescription = formData.jobDescription.trim();
+    if (!normalizeComparable(jobDescription)) {
+      setRequirementsError("Paste or extract job description text first.");
+      return;
+    }
+
+    setIsExtractingRequirements(true);
+    setRequirementsError(null);
+
+    try {
+      const response = await fetch("/api/extract-requirements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobDescription }),
+      });
+      const rawText = await response.text();
+      let payload: any = {};
+      if (rawText) {
+        try {
+          payload = JSON.parse(rawText);
+        } catch {
+          throw new Error("Requirement extraction failed. Invalid JSON.");
+        }
+      }
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to extract requirements.");
+      }
+      if (!Array.isArray(payload?.requirements)) {
+        throw new Error("Extraction failed. No requirements were returned.");
+      }
+      setExtractedRequirements(payload.requirements as ExtractedRequirement[]);
+    } catch (error) {
+      console.error("Error extracting requirements:", error);
+      setRequirementsError(
+        error instanceof Error ? error.message : "Failed to extract requirements."
+      );
+    } finally {
+      setIsExtractingRequirements(false);
+    }
+  }, [formData.jobDescription]);
 
   const handleImportResume = useCallback(async (file: File) => {
     setIsImportingResume(true);
@@ -342,6 +412,10 @@ export function AppLayout() {
                   onExtractJobDescription={handleExtractJobDescription}
                   isExtractingJobDescription={isExtractingJobDescription}
                   extractError={extractError}
+                  onExtractRequirements={handleExtractRequirements}
+                  isExtractingRequirements={isExtractingRequirements}
+                  requirements={extractedRequirements}
+                  requirementsError={requirementsError}
                   isDiffViewOpen={showDiffView}
                   onToggleDiffView={handleToggleDiffView}
                   onResetResume={handleResetResume}
@@ -575,6 +649,10 @@ export function AppLayout() {
                 onExtractJobDescription={handleExtractJobDescription}
                 isExtractingJobDescription={isExtractingJobDescription}
                 extractError={extractError}
+                onExtractRequirements={handleExtractRequirements}
+                isExtractingRequirements={isExtractingRequirements}
+                requirements={extractedRequirements}
+                requirementsError={requirementsError}
                 isDiffViewOpen={showDiffView}
                 onToggleDiffView={handleToggleDiffView}
                 onResetResume={handleResetResume}

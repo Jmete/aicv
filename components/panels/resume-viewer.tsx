@@ -2621,7 +2621,7 @@ export function ResumeViewer({
   ) => {
     if (isPrintPreviewMode) return null;
     return (
-      <div className="pointer-events-none absolute right-0 top-0 z-10 flex items-center gap-1 rounded-md border border-border bg-background/90 px-1 py-0.5 text-[10px] text-muted-foreground shadow-sm opacity-0 backdrop-blur-sm transition group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 print:hidden">
+      <div className="relative z-10 ml-auto mt-1 flex items-center gap-1 rounded-md border border-border bg-background/90 px-1 py-0.5 text-[10px] text-muted-foreground shadow-sm backdrop-blur-sm transition print:hidden md:pointer-events-none md:absolute md:left-full md:top-0 md:ml-1.5 md:mt-0 md:opacity-0 md:group-hover:pointer-events-auto md:group-hover:opacity-100 md:group-focus-within:pointer-events-auto md:group-focus-within:opacity-100">
         <span className="px-1 text-[9px] uppercase tracking-wide text-muted-foreground/70">
           {label}
         </span>
@@ -3664,9 +3664,6 @@ export function ResumeViewer({
               getAlignmentClass(headerAlignment.name)
             )}
           >
-            {renderInlineAlignment("Name", headerAlignment.name, (value) =>
-              updateHeaderAlignment("name", value)
-            )}
             <h1
               className="font-bold text-gray-900 dark:text-gray-100"
               style={resumeFontSizeStyles.name}
@@ -3681,6 +3678,9 @@ export function ResumeViewer({
                 />
               )}
             </h1>
+            {renderInlineAlignment("Name", headerAlignment.name, (value) =>
+              updateHeaderAlignment("name", value)
+            )}
           </div>
           <div
             className={cn(
@@ -3688,9 +3688,6 @@ export function ResumeViewer({
               getAlignmentClass(headerAlignment.subtitle)
             )}
           >
-            {renderInlineAlignment("Subtitle", headerAlignment.subtitle, (value) =>
-              updateHeaderAlignment("subtitle", value)
-            )}
             <p
               className="mt-0.5 font-medium text-gray-700 dark:text-gray-300"
               style={resumeFontSizeStyles.subtitle}
@@ -3705,6 +3702,9 @@ export function ResumeViewer({
                 />
               )}
             </p>
+            {renderInlineAlignment("Subtitle", headerAlignment.subtitle, (value) =>
+              updateHeaderAlignment("subtitle", value)
+            )}
           </div>
           <div
             className={cn(
@@ -3712,9 +3712,6 @@ export function ResumeViewer({
               getAlignmentClass(headerAlignment.contact)
             )}
           >
-            {renderInlineAlignment("Contact", headerAlignment.contact, (value) =>
-              updateHeaderAlignment("contact", value)
-            )}
             <p
               className="mt-1 text-gray-600 dark:text-gray-400"
               style={resumeFontSizeStyles.contact}
@@ -3785,6 +3782,9 @@ export function ResumeViewer({
                 ));
               })()}
             </p>
+            {renderInlineAlignment("Contact", headerAlignment.contact, (value) =>
+              updateHeaderAlignment("contact", value)
+            )}
           </div>
         </div>
       ),

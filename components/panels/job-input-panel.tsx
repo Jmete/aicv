@@ -1,6 +1,9 @@
 "use client";
 
-import type { ApplicationFormData } from "@/components/layout/app-layout";
+import type {
+  ApplicationFormData,
+  ExtractedRequirement,
+} from "@/components/layout/app-layout";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +16,10 @@ interface JobInputPanelProps {
   onExtractJobDescription: () => void;
   isExtractingJobDescription: boolean;
   extractError: string | null;
+  onExtractRequirements: () => void;
+  isExtractingRequirements: boolean;
+  requirements: ExtractedRequirement[];
+  requirementsError: string | null;
   isDiffViewOpen: boolean;
   onToggleDiffView: () => void;
   onResetResume: () => void;
@@ -24,11 +31,16 @@ export function JobInputPanel({
   onExtractJobDescription,
   isExtractingJobDescription,
   extractError,
+  onExtractRequirements,
+  isExtractingRequirements,
+  requirements,
+  requirementsError,
   isDiffViewOpen,
   onToggleDiffView,
   onResetResume,
 }: JobInputPanelProps) {
   const canExtract = Boolean(formData.jobUrl.trim());
+  const canExtractRequirements = Boolean(formData.jobDescription.trim());
 
   return (
     <div className="flex h-full flex-col">
@@ -84,12 +96,31 @@ export function JobInputPanel({
           </div>
 
           <div className="space-y-2">
-            <label
-              htmlFor="jobDescription"
-              className="text-sm font-medium text-muted-foreground"
-            >
-              Extracted Text
-            </label>
+            <div className="flex items-center justify-between gap-2">
+              <label
+                htmlFor="jobDescription"
+                className="text-sm font-medium text-muted-foreground"
+              >
+                Extracted Text
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0 px-3 text-xs"
+                onClick={onExtractRequirements}
+                disabled={!canExtractRequirements || isExtractingRequirements}
+              >
+                {isExtractingRequirements ? (
+                  <>
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                    Extracting...
+                  </>
+                ) : (
+                  "Extract Requirements"
+                )}
+              </Button>
+            </div>
             <Textarea
               id="jobDescription"
               placeholder="Extracted job text appears here..."
@@ -101,9 +132,41 @@ export function JobInputPanel({
             />
           </div>
 
+          <div className="rounded-md border border-border/70 bg-card/30 p-3">
+            <p className="text-xs font-semibold tracking-wide text-foreground">
+              Prioritized Requirements
+            </p>
+            {requirements.length > 0 ? (
+              <ol className="mt-2 space-y-1.5">
+                {requirements.map((item, index) => (
+                  <li
+                    key={`${item.requirement}-${index}`}
+                    className="flex items-start justify-between gap-3 rounded-sm border border-border/40 bg-background/80 px-2 py-1.5 text-[11px]"
+                  >
+                    <span className="min-w-0 text-foreground">
+                      {index + 1}. {item.requirement}
+                    </span>
+                    <span className="shrink-0 rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5 font-medium text-muted-foreground">
+                      {item.weight}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Click &quot;Extract Requirements&quot; to generate a weighted list.
+              </p>
+            )}
+          </div>
+
           {extractError ? (
             <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-[11px] text-destructive">
               {extractError}
+            </div>
+          ) : null}
+          {requirementsError ? (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-[11px] text-destructive">
+              {requirementsError}
             </div>
           ) : null}
         </div>

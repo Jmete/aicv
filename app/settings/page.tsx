@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Bell, FileText, Palette } from "lucide-react";
+import { ArrowLeft, Bell, ChevronLeft, ChevronRight, FileText, Palette } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { ResumeViewer } from "@/components/panels/resume-viewer";
 import { ResumeEditorPanel } from "@/components/resume-editor";
@@ -51,6 +51,8 @@ export default function SettingsPage() {
   const [mobileDefaultResumeTab, setMobileDefaultResumeTab] = useState<
     "preview" | "edit"
   >("preview");
+  const [isDefaultResumeEditorPanelOpen, setIsDefaultResumeEditorPanelOpen] =
+    useState(true);
 
   const activeOptionData = settingsOptions.find(
     (option) => option.id === activeOption
@@ -320,14 +322,46 @@ export default function SettingsPage() {
                 />
               </div>
 
-              <div className="w-[460px] shrink-0 border-l border-border">
-                <ResumeEditorPanel
-                  resumeData={resumeData}
-                  onResumeUpdate={handleResumeUpdate}
-                  onImportResume={handleImportResume}
-                  isImportingResume={isImportingResume}
-                  importError={importError}
-                />
+              <div
+                className={cn(
+                  "relative shrink-0 border-l border-border transition-[width] duration-200",
+                  isDefaultResumeEditorPanelOpen ? "w-[460px]" : "w-11"
+                )}
+              >
+                {isDefaultResumeEditorPanelOpen ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="absolute left-2 top-2 z-20 h-7 w-7"
+                      onClick={() => setIsDefaultResumeEditorPanelOpen(false)}
+                      aria-label="Collapse editor panel"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <ResumeEditorPanel
+                      resumeData={resumeData}
+                      onResumeUpdate={handleResumeUpdate}
+                      onImportResume={handleImportResume}
+                      isImportingResume={isImportingResume}
+                      importError={importError}
+                    />
+                  </>
+                ) : (
+                  <div className="flex h-full items-start justify-center pt-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => setIsDefaultResumeEditorPanelOpen(true)}
+                      aria-label="Open editor panel"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
               </div>
             </>
           ) : (

@@ -11,9 +11,11 @@ export const SELECTION_REWRITE_MODEL_ID = QUICK_EDIT_MODEL_ID;
 
 // Resume file import + structured extraction.
 export const RESUME_IMPORT_MODEL_ID = "gpt-5-nano";
+export const REQUIREMENT_EXTRACTION_MODEL_ID = "gpt-5-nano";
 
 export const AI_MODELS = {
   inlineRewrite: openai(INLINE_REWRITE_MODEL_ID),
   selectionRewrite: openai(SELECTION_REWRITE_MODEL_ID),
   resumeImport: openai(RESUME_IMPORT_MODEL_ID),
+  requirementExtraction: openai(REQUIREMENT_EXTRACTION_MODEL_ID),
 } as const;
