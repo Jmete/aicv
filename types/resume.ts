@@ -145,3 +145,29 @@ export interface ResumeData {
   skills: SkillEntry[];
   hyperlinks?: TextHyperlink[];
 }
+
+export type ResumeSyncSection =
+  | "layout"
+  | "info"
+  | "work"
+  | "projects"
+  | "education"
+  | "skills"
+  | "coverLetter";
+
+export interface ResumeProfile {
+  id: string;
+  name: string;
+  resumeData: ResumeData;
+}
+
+export interface ResumeProfileSyncSettings {
+  autoSync: Record<ResumeSyncSection, boolean>;
+}
+
+export interface ResumeProfilesData {
+  version: 1;
+  selectedProfileId: string;
+  profiles: ResumeProfile[];
+  syncSettings: ResumeProfileSyncSettings;
+}
