@@ -48,6 +48,6 @@ Constraints
 - For insert values:
   - experience: JSON string of { company, jobTitle, location, startDate, endDate, bullets }
   - projects: JSON string of { name, technologies, bullets }
-  - education: JSON string of { degree, institution, location, field, graduationDate, gpa }
+  - education: JSON string of { degree, institution, location, field, graduationDate, gpa, other }
   - skills: JSON string of { name, category }
   - bullets/technologies: plain string `value`

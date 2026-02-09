@@ -95,6 +95,7 @@ export const buildResumeDataFromImport = (
       field: safeString(entry.field),
       graduationDate: safeString(entry.graduationDate),
       gpa: safeString(entry.gpa),
+      other: safeString(entry.other),
     })),
     skills: (content?.skills ?? []).map((skill) => ({
       id: createId(),

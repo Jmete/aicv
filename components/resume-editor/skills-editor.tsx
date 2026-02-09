@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { createId } from "@/lib/id";
 import type { SkillEntry } from "@/types";
-import { Plus, Trash2 } from "lucide-react";
+import { GripVertical, Plus, Trash2 } from "lucide-react";
 
 interface SkillsEditorProps {
   skills: SkillEntry[];
@@ -15,6 +15,7 @@ interface SkillsEditorProps {
 
 export function SkillsEditor({ skills, onChange }: SkillsEditorProps) {
   const [newSkillGroup, setNewSkillGroup] = useState("");
+  const [draggingSkillId, setDraggingSkillId] = useState<string | null>(null);
 
   const addSkill = (category = "") => {
     const newSkill: SkillEntry = {
@@ -31,6 +32,20 @@ export function SkillsEditor({ skills, onChange }: SkillsEditorProps) {
 
   const updateSkill = (id: string, updates: Partial<SkillEntry>) => {
     onChange(skills.map((s) => (s.id === id ? { ...s, ...updates } : s)));
+  };
+
+  const reorderSkills = (fromId: string, targetId: string) => {
+    if (fromId === targetId) return;
+
+    const fromIndex = skills.findIndex((skill) => skill.id === fromId);
+    const targetIndex = skills.findIndex((skill) => skill.id === targetId);
+    if (fromIndex < 0 || targetIndex < 0) return;
+
+    const next = [...skills];
+    const [moved] = next.splice(fromIndex, 1);
+    const insertIndex = targetIndex > fromIndex ? targetIndex - 1 : targetIndex;
+    next.splice(insertIndex, 0, moved);
+    onChange(next);
   };
 
   const groupedSkills = useMemo(() => {
@@ -75,7 +90,27 @@ export function SkillsEditor({ skills, onChange }: SkillsEditorProps) {
           </div>
           <div className="space-y-2">
             {categorySkills.map((skill) => (
-              <div key={skill.id} className="flex items-center gap-2">
+              <div
+                key={skill.id}
+                className="flex items-center gap-2 rounded-md border border-transparent px-1 py-1 transition-colors hover:border-border"
+                draggable
+                onDragStart={(event) => {
+                  setDraggingSkillId(skill.id);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", skill.id);
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDragEnd={() => setDraggingSkillId(null)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (!draggingSkillId) return;
+                  reorderSkills(draggingSkillId, skill.id);
+                  setDraggingSkillId(null);
+                }}
+              >
+                <div className="shrink-0 cursor-grab text-muted-foreground/70">
+                  <GripVertical className="h-4 w-4" />
+                </div>
                 <Input
                   value={skill.name}
                   onChange={(e) =>

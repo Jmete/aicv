@@ -1822,6 +1822,7 @@ export function ResumeViewer({
         { path: `education[${index}].field`, text: entry.field ?? "" },
         { path: `education[${index}].graduationDate`, text: entry.graduationDate ?? "" },
         { path: `education[${index}].gpa`, text: entry.gpa ?? "" },
+        { path: `education[${index}].other`, text: entry.other ?? "" },
       ]);
     }
     if (section === "skills") {
@@ -2213,6 +2214,7 @@ export function ResumeViewer({
         field?: string;
         graduationDate?: string;
         gpa?: string;
+        other?: string;
       }>(value);
       if (!entry) return null;
       return {
@@ -2223,6 +2225,7 @@ export function ResumeViewer({
         field: entry.field ?? "",
         graduationDate: entry.graduationDate ?? "",
         gpa: entry.gpa ?? "",
+        other: entry.other ?? "",
       };
     }
 
@@ -2735,6 +2738,7 @@ export function ResumeViewer({
       field: "",
       graduationDate: "",
       gpa: "",
+      other: "",
     };
     onResumeUpdate({ ...resumeData, education: [...education, newEntry] });
   };
@@ -3261,6 +3265,7 @@ export function ResumeViewer({
     const secondaryPath = `education[${entryIndex}].${secondaryField}`;
     const graduationPath = `education[${entryIndex}].graduationDate`;
     const gpaPath = `education[${entryIndex}].gpa`;
+    const otherPath = `education[${entryIndex}].other`;
     const locationPath = `education[${entryIndex}].location`;
 
     return (
@@ -3354,6 +3359,22 @@ export function ResumeViewer({
                     />
                   )}
                 </span>
+              </>
+            )}
+            {entry.other && (
+              <>
+                <span className="text-gray-400"> | </span>
+                {renderWithFeedback(
+                  otherPath,
+                  <EditableText
+                    value={entry.other}
+                    onChange={(value) =>
+                      updateEducationEntry(entry.id, { other: value })
+                    }
+                    placeholder="Honours"
+                    fieldPath={otherPath}
+                  />
+                )}
               </>
             )}
           </p>

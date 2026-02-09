@@ -68,6 +68,7 @@ const resumeImportContentSchema = z.object({
       field: z.string(),
       graduationDate: z.string(),
       gpa: z.string(),
+      other: z.string().optional().default(""),
     })
   ),
   skills: z.array(
@@ -449,6 +450,7 @@ const normalizeResumeData = (input: unknown): ResumeData | null => {
               field: asString(entry.field),
               graduationDate: asString(entry.graduationDate),
               gpa: asString(entry.gpa),
+              other: asString(entry.other),
             },
           ];
         })
@@ -512,7 +514,8 @@ const buildAllPaths = (resume: ResumeImportContent) => {
       `education[${i}].location`,
       `education[${i}].field`,
       `education[${i}].graduationDate`,
-      `education[${i}].gpa`
+      `education[${i}].gpa`,
+      `education[${i}].other`
     );
   });
 

@@ -56,6 +56,7 @@ Field path rules (use these exact paths in `fieldFeedback`)
 - education[i].field
 - education[i].graduationDate
 - education[i].gpa
+- education[i].other
 - skills[i].name
 - skills[i].category
 
@@ -99,7 +100,8 @@ Output JSON shape
         "location": "",
         "field": "",
         "graduationDate": "",
-        "gpa": ""
+        "gpa": "",
+        "other": ""
       }
     ],
     "skills": [

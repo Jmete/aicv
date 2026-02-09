@@ -54,6 +54,7 @@ export interface ResumeImportContent {
     field: string;
     graduationDate: string;
     gpa: string;
+    other: string;
   }>;
   skills: Array<{
     name: string;

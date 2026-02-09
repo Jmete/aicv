@@ -59,6 +59,7 @@ export interface EducationEntry {
   field?: string;
   graduationDate?: string;
   gpa?: string;
+  other?: string;
 }
 
 export type ExperienceOrder = "title-first" | "company-first";

@@ -28,6 +28,7 @@ export function EducationEditor({
       institution: "",
       location: "",
       gpa: "",
+      other: "",
     };
     onChange([...education, newEntry]);
   };
@@ -114,7 +115,7 @@ export function EducationEditor({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="space-y-2">
               <Label className="text-xs text-muted-foreground">
                 University Location
@@ -139,6 +140,20 @@ export function EducationEditor({
                   updateEntry(entry.id, { gpa: e.target.value })
                 }
                 placeholder="3.8"
+                className="h-8"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">
+                Other (optional)
+              </Label>
+              <Input
+                value={entry.other ?? ""}
+                onChange={(e) =>
+                  updateEntry(entry.id, { other: e.target.value })
+                }
+                placeholder="Honours"
                 className="h-8"
               />
             </div>
