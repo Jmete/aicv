@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { db, applications } from "@/lib/db";
 import { desc } from "drizzle-orm";
 
+export const runtime = "nodejs";
+
 export async function GET() {
   try {
     const allApplications = await db

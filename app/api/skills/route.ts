@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { db, skills } from "@/lib/db";
 
+export const runtime = "nodejs";
+
 export async function GET() {
   try {
     const allSkills = await db.select().from(skills);

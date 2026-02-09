@@ -4,6 +4,8 @@ import { DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
+export const runtime = "nodejs";
+
 const RESUME_DATA_ID = 1;
 
 export async function GET() {

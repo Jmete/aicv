@@ -36,10 +36,14 @@ export type CoverageStatus = "explicit" | "partial" | "none";
 export type Feasibility = "feasible" | "maybe" | "not_feasible";
 
 export interface MatchedResumeRef {
-  path: string;
   resumeId: string;
   excerpt: string;
   matchStrength: number;
+}
+
+export interface RecommendedTarget {
+  resumeId: string;
+  recommendations: string[];
 }
 
 export interface ExtractedAtomicUnit {
@@ -51,7 +55,7 @@ export interface ExtractedAtomicUnit {
   coverageStatus: CoverageStatus;
   feasibility: Feasibility;
   matchedResumeRefs: MatchedResumeRef[];
-  recommendedTargetPaths: string[];
+  recommendedTargets: RecommendedTarget[];
   gaps: string[];
 }
 
@@ -126,31 +130,28 @@ const normalizeMatchedResumeRefs = (values: unknown): MatchedResumeRef[] => {
   const deduped = new Map<string, MatchedResumeRef>();
   for (const value of values) {
     if (!isObject(value)) continue;
-    const pathValue = value.path;
     const excerptValue = value.excerpt;
     const resumeIdValue = value.resumeId;
     const matchStrengthValue = value.matchStrength;
     if (
-      typeof pathValue !== "string" ||
       typeof excerptValue !== "string" ||
       typeof resumeIdValue !== "string" ||
       typeof matchStrengthValue !== "number"
     ) {
       continue;
     }
-    const path = normalizeComparable(pathValue).slice(0, 220);
     const excerpt = normalizeComparable(excerptValue).slice(0, 240);
-    if (!path && !excerpt) continue;
+    const resumeId = normalizeComparable(resumeIdValue).slice(0, 80);
+    if (!resumeId && !excerpt) continue;
     const normalized = {
-      path,
-      resumeId: normalizeComparable(resumeIdValue).slice(0, 80),
+      resumeId,
       excerpt,
       matchStrength: Math.max(
         0,
         Math.min(1, Math.round(matchStrengthValue * 1000) / 1000)
       ),
     };
-    const key = `${normalized.path.toLowerCase()}|${normalized.excerpt.toLowerCase()}`;
+    const key = `${normalized.resumeId.toLowerCase()}|${normalized.excerpt.toLowerCase()}`;
     const existing = deduped.get(key);
     if (!existing || normalized.matchStrength > existing.matchStrength) {
       deduped.set(key, normalized);
@@ -159,6 +160,69 @@ const normalizeMatchedResumeRefs = (values: unknown): MatchedResumeRef[] => {
   return Array.from(deduped.values())
     .sort((a, b) => b.matchStrength - a.matchStrength)
     .slice(0, 3);
+};
+
+const normalizeRecommendedTargets = (
+  values: unknown,
+  matchedResumeRefs: MatchedResumeRef[],
+  canonical: string,
+  gaps: string[]
+): RecommendedTarget[] => {
+  const deduped = new Map<string, RecommendedTarget>();
+  if (Array.isArray(values)) {
+    for (const value of values) {
+      if (!isObject(value)) continue;
+      const resumeIdValue = value.resumeId;
+      if (typeof resumeIdValue !== "string") continue;
+      const resumeId = normalizeComparable(resumeIdValue).slice(0, 80);
+      if (!resumeId) continue;
+      const recommendations = normalizeStringArray(value.recommendations, 5, 180);
+      if (!recommendations.length) continue;
+      const existing = deduped.get(resumeId);
+      if (!existing) {
+        deduped.set(resumeId, { resumeId, recommendations });
+        continue;
+      }
+      deduped.set(resumeId, {
+        resumeId,
+        recommendations: normalizeStringArray(
+          [...existing.recommendations, ...recommendations],
+          5,
+          180
+        ),
+      });
+    }
+  }
+
+  const normalizedTargets = Array.from(deduped.values()).slice(0, 10);
+  if (normalizedTargets.length > 0) return normalizedTargets;
+
+  const fallbackRecommendations = normalizeStringArray(
+    [
+      gaps[0],
+      canonical
+        ? `Add truthful resume wording that explicitly demonstrates ${canonical}.`
+        : "",
+    ],
+    3,
+    180
+  );
+  if (!fallbackRecommendations.length) return [];
+
+  const fallbackResumeIds = Array.from(
+    new Set(
+      matchedResumeRefs
+        .slice(0, 2)
+        .map((ref) => normalizeComparable(ref.resumeId).slice(0, 80))
+        .filter((resumeId) => resumeId.length > 0)
+    )
+  );
+
+  return fallbackResumeIds
+    .map((resumeId) => ({
+      resumeId,
+      recommendations: fallbackRecommendations,
+    }));
 };
 
 const normalizeAtomicUnits = (items: unknown[]): ExtractedAtomicUnit[] => {
@@ -186,6 +250,8 @@ const normalizeAtomicUnits = (items: unknown[]): ExtractedAtomicUnit[] => {
     const id = normalizeComparable(idValue);
     const canonical = normalizeComparable(canonicalValue);
     if (!id || !canonical) continue;
+    const matchedResumeRefs = normalizeMatchedResumeRefs(item.matchedResumeRefs);
+    const gaps = normalizeStringArray(item.gaps, 10, 160);
     const next = {
       id,
       canonical,
@@ -194,13 +260,14 @@ const normalizeAtomicUnits = (items: unknown[]): ExtractedAtomicUnit[] => {
       mustHave: mustHaveValue,
       coverageStatus: coverageStatusValue,
       feasibility: feasibilityValue,
-      matchedResumeRefs: normalizeMatchedResumeRefs(item.matchedResumeRefs),
-      recommendedTargetPaths: normalizeStringArray(
-        item.recommendedTargetPaths,
-        10,
-        220
+      matchedResumeRefs,
+      recommendedTargets: normalizeRecommendedTargets(
+        item.recommendedTargets,
+        matchedResumeRefs,
+        canonical,
+        gaps
       ),
-      gaps: normalizeStringArray(item.gaps, 10, 160),
+      gaps,
     };
     const key = canonical.toLowerCase();
     const existing = deduped.get(key);
@@ -425,7 +492,15 @@ export function AppLayout() {
       }
       setRequirementsDebugPayload(payload);
       if (!response.ok) {
-        throw new Error(payload?.error || "Failed to extract requirements.");
+        const baseError =
+          typeof payload?.error === "string" && payload.error.trim()
+            ? payload.error.trim()
+            : "Failed to extract requirements.";
+        const details =
+          typeof payload?.details === "string" && payload.details.trim()
+            ? payload.details.trim()
+            : "";
+        throw new Error(details ? `${baseError} ${details}` : baseError);
       }
       const parsedAtomicUnits = extractAtomicUnitsFromPayload(payload);
       if (!parsedAtomicUnits.length) {

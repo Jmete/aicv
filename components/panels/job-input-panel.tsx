@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ApplicationFormData,
   ExtractedAtomicUnit,
@@ -27,6 +27,49 @@ interface JobInputPanelProps {
   onResetResume: () => void;
 }
 
+interface ApplyPrioritySnapshot {
+  CurrentFit: number;
+  AchievableFit: number;
+  ApplyPriority: number;
+  blockerCount: number;
+  blockerWeightSum: number;
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const toNumber = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const extractApplyPrioritySnapshot = (
+  payload: unknown
+): ApplyPrioritySnapshot | null => {
+  if (!isObject(payload) || !isObject(payload.applyPriority)) return null;
+  const currentFit = toNumber(payload.applyPriority.CurrentFit);
+  const achievableFit = toNumber(payload.applyPriority.AchievableFit);
+  const applyPriority = toNumber(payload.applyPriority.ApplyPriority);
+  const blockerCount = toNumber(payload.applyPriority.blockerCount);
+  const blockerWeightSum = toNumber(payload.applyPriority.blockerWeightSum);
+
+  if (
+    currentFit === null ||
+    achievableFit === null ||
+    applyPriority === null ||
+    blockerCount === null ||
+    blockerWeightSum === null
+  ) {
+    return null;
+  }
+
+  return {
+    CurrentFit: currentFit,
+    AchievableFit: achievableFit,
+    ApplyPriority: applyPriority,
+    blockerCount,
+    blockerWeightSum,
+  };
+};
+
 export function JobInputPanel({
   formData,
   onChange,
@@ -45,6 +88,7 @@ export function JobInputPanel({
   const canExtract = Boolean(formData.jobUrl.trim());
   const canExtractRequirements = Boolean(formData.jobDescription.trim());
   const [isDebugOpen, setIsDebugOpen] = useState(false);
+  const [didCopyDebugJson, setDidCopyDebugJson] = useState(false);
   const debugJson = useMemo(
     () =>
       requirementsDebugPayload
@@ -52,9 +96,43 @@ export function JobInputPanel({
         : "",
     [requirementsDebugPayload]
   );
+  const applyPriority = useMemo(
+    () => extractApplyPrioritySnapshot(requirementsDebugPayload),
+    [requirementsDebugPayload]
+  );
+  const copyDebugJson = useCallback(async () => {
+    if (!debugJson) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(debugJson);
+      } else if (typeof document !== "undefined") {
+        const textarea = document.createElement("textarea");
+        textarea.value = debugJson;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "absolute";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setDidCopyDebugJson(true);
+    } catch (error) {
+      console.error("Failed to copy debug JSON:", error);
+      setDidCopyDebugJson(false);
+    }
+  }, [debugJson]);
+
+  useEffect(() => {
+    if (!didCopyDebugJson) return;
+    const timeout = window.setTimeout(() => {
+      setDidCopyDebugJson(false);
+    }, 1200);
+    return () => window.clearTimeout(timeout);
+  }, [didCopyDebugJson]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <div className="border-b border-border p-4">
         <h2 className="text-sm font-medium text-foreground">Job URL Extractor</h2>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -63,7 +141,7 @@ export function JobInputPanel({
       </div>
 
       <ScrollArea className="flex-1">
-        <div className="flex flex-col gap-4 p-4">
+        <div className="flex min-w-0 flex-col gap-4 p-4">
           <div className="space-y-2">
             <label
               htmlFor="jobUrl"
@@ -143,10 +221,49 @@ export function JobInputPanel({
             />
           </div>
 
-          <div className="rounded-md border border-border/70 bg-card/30 p-3">
+          <div className="min-w-0 overflow-hidden rounded-md border border-border/70 bg-card/30 p-3">
             <p className="text-xs font-semibold tracking-wide text-foreground">
               Prioritized Requirements
             </p>
+            {applyPriority ? (
+              <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+                <div className="rounded-md border border-border/50 bg-background/90 p-2">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Current Fit
+                  </p>
+                  <p className="text-sm font-semibold text-foreground">
+                    {applyPriority.CurrentFit.toFixed(1)}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border/50 bg-background/90 p-2">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Achievable Fit
+                  </p>
+                  <p className="text-sm font-semibold text-foreground">
+                    {applyPriority.AchievableFit.toFixed(1)}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border/50 bg-background/90 p-2">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Apply Priority
+                  </p>
+                  <p className="text-sm font-semibold text-foreground">
+                    {applyPriority.ApplyPriority.toFixed(1)}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border/50 bg-background/90 p-2">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Blockers
+                  </p>
+                  <p className="text-sm font-semibold text-foreground">
+                    {Math.round(applyPriority.blockerCount)}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    weight {applyPriority.blockerWeightSum.toFixed(1)}
+                  </p>
+                </div>
+              </div>
+            ) : null}
             {atomicUnits.length > 0 ? (
               <div className="mt-2 grid grid-cols-1 gap-2">
                 {atomicUnits.map((item, index) => (
@@ -182,6 +299,14 @@ export function JobInputPanel({
                         gap: {item.gaps[0]}
                       </p>
                     ) : null}
+                    {item.recommendedTargets.length > 0 ? (
+                      <p className="mt-1 truncate text-[10px] text-muted-foreground">
+                        target: {item.recommendedTargets[0].resumeId}
+                        {item.recommendedTargets[0].recommendations[0]
+                          ? ` | edit: ${item.recommendedTargets[0].recommendations[0]}`
+                          : ""}
+                      </p>
+                    ) : null}
                   </article>
                 ))}
               </div>
@@ -195,20 +320,32 @@ export function JobInputPanel({
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   Debug JSON
                 </p>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-[10px]"
-                  onClick={() => setIsDebugOpen((current) => !current)}
-                  disabled={!requirementsDebugPayload}
-                >
-                  {isDebugOpen ? "Hide" : "Show"}
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-[10px]"
+                    onClick={copyDebugJson}
+                    disabled={!debugJson}
+                  >
+                    {didCopyDebugJson ? "Copied" : "Copy JSON"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-[10px]"
+                    onClick={() => setIsDebugOpen((current) => !current)}
+                    disabled={!requirementsDebugPayload}
+                  >
+                    {isDebugOpen ? "Hide" : "Show"}
+                  </Button>
+                </div>
               </div>
               {requirementsDebugPayload ? (
                 isDebugOpen ? (
-                  <pre className="mt-2 max-h-56 overflow-auto rounded-sm border border-border/50 bg-background/90 p-2 font-mono text-[10px] leading-relaxed text-foreground">
+                  <pre className="mt-2 max-h-56 w-full max-w-full overflow-x-auto overflow-y-auto whitespace-pre-wrap break-words rounded-sm border border-border/50 bg-background/90 p-2 font-mono text-[10px] leading-relaxed text-foreground">
                     {debugJson}
                   </pre>
                 ) : null

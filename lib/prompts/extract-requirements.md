@@ -67,14 +67,14 @@ For each atomic requirement, compare against the resume and output:
 ### Matching outputs required
 For each atomic unit, include:
 - `matchedResumeRefs[]` (0–3 best matches), each with:
-  - `path` (JSONPath-like string, e.g., "experience[0].bullets[2]" or "skills[3].name" or "metadata.subtitle")
   - `resumeId` (the object id if available, e.g., experience[i].id / project[i].id / skill.id)
   - `excerpt` (short excerpt from resume text that supports the match)
   - `matchStrength` in [0,1]
 
 Also include:
-- `recommendedTargetPaths[]` (where to insert wording later if feasible), ranked:
-  - prefer experience/project bullets first, then subtitle, then skills.
+- `recommendedTargets[]` (where and how to edit wording), each item:
+  - `resumeId` (existing id of the element, e.g., `"id": "fa3d38b7-27da-4950-841d-00c2a2a67605"`)
+  - `recommendations[]` (1-3 short truthful edit suggestions)
 
 ---
 
@@ -88,7 +88,6 @@ Return **strict JSON only** matching this schema exactly.
 {
   "roleTitle": "",
   "roleFamily": "data_science|mlops|data_engineering|product|audit|consulting|governance|other",
-  "budgets": { "maxUnits": 24, "maxMustHave": 14, "maxNiceToHave": 10 },
   "atomicUnits": [
     {
       "id": "",
@@ -103,28 +102,20 @@ Return **strict JSON only** matching this schema exactly.
       "feasibility": "feasible|maybe|not_feasible",
       "matchedResumeRefs": [
         {
-          "path": "",
           "resumeId": "",
           "excerpt": "",
           "matchStrength": 0
         }
       ],
-      "recommendedTargetPaths": [],
+      "recommendedTargets": [
+        {
+          "resumeId": "",
+          "recommendations": []
+        }
+      ],
       "gaps": []
     }
-  ],
-  "clusters": [
-    { "name": "", "unitIds": [], "weight": 0 }
-  ],
-  "summary": {
-    "mustHaveCoveredCount": 0,
-    "mustHaveTotalCount": 0,
-    "niceToHaveCoveredCount": 0,
-    "niceToHaveTotalCount": 0,
-    "topGaps": [
-      { "unitId": "", "canonical": "", "type": "", "reason": "" }
-    ]
-  }
+  ]
 }
 ````
 
@@ -135,9 +126,11 @@ Return **strict JSON only** matching this schema exactly.
 * `aliases`: synonyms (≤ 5 words each).
 * `jdEvidence`: 1–3 JD excerpts (≤ 12 words each).
 * `notes`: ≤ 12 words.
-* `matchedResumeRefs`: empty array allowed when none.
-* `resumeId`: if the path belongs to an object with `id` (experience/project/skill), use it; else use "".
-* `recommendedTargetPaths`: include only paths that exist in the resume JSON.
+* `coverageStatus`: explicit if requirement or alias is directly mentioned in resume. partial if requirement or alias is heavily implied but not directly mentioned. none is the requirement or alias is not mentioned or implied in the resume.
+* `matchedResumeRefs`: empty array allowed ONLY when none. If `coverageStatus` is explicit or partial, there must be some kind of reference in the resume to make sense.
+* `resumeId`: if the evidence belongs to an object with `id` (experience/project/skill), use it; else use "".
+* `recommendedTargets.resumeId`: must map to an existing resume element id.
+* `recommendedTargets.recommendations`: short truthful edits only (no fabricated facts). In-place edits are preferred because adding too much text will remove valuable space in the resume. Ideally, each recommendation should smoothly integrate the canonical phrase into the existing resume element text.
 * `gaps`: short strings explaining why not covered/feasible (e.g., “cloud platform not in resume”).
 
 ---
@@ -156,7 +149,7 @@ Resume has “automating workflows with LLMs / GenAI”.
 Output might be:
 
 * canonical: "model monitoring" (type governance) → coverageStatus: partial → feasibility: maybe/feasible depending on evidence
-* matchedResumeRefs includes the best related bullet path(s)
-* recommendedTargetPaths points to that bullet for later rewriting
+* matchedResumeRefs includes the best related resume id(s) and excerpts
+* recommendedTargets points to that bullet and gives concrete edit suggestions
 
 Return JSON only.
