@@ -618,29 +618,9 @@ export function AppLayout() {
           body.resumeData as ResumeData
         );
         setResumeData(nextResumeData);
-        setDefaultResumeData(nextResumeData);
-        setResumeProfilesData((current) =>
-          normalizeResumeProfilesData({
-            ...current,
-            profiles: current.profiles.map((profile) =>
-              profile.id === current.selectedProfileId
-                ? { ...profile, resumeData: nextResumeData }
-                : profile
-            ),
-          })
-        );
         setResumeAnalysis(null);
         setIsDiffViewOpen(false);
         setDiffBaseResume(null);
-
-        const saveResponse = await fetch("/api/resume-data", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(nextResumeData),
-        });
-        if (!saveResponse.ok) {
-          throw new Error("Config imported, but saving failed.");
-        }
         return;
       }
 
