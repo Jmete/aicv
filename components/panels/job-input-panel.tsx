@@ -10,8 +10,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface JobInputPanelProps {
+  profileOptions: { id: string; name: string }[];
+  selectedProfileId: string;
+  onSelectProfile: (profileId: string) => void;
+  isSelectingProfile: boolean;
   formData: ApplicationFormData;
   onChange: (data: ApplicationFormData) => void;
   onExtractJobDescription: () => void;
@@ -71,6 +82,10 @@ const extractApplyPrioritySnapshot = (
 };
 
 export function JobInputPanel({
+  profileOptions,
+  selectedProfileId,
+  onSelectProfile,
+  isSelectingProfile,
   formData,
   onChange,
   onExtractJobDescription,
@@ -134,10 +149,29 @@ export function JobInputPanel({
   return (
     <div className="flex h-full min-w-0 flex-col">
       <div className="border-b border-border p-4">
-        <h2 className="text-sm font-medium text-foreground">Job URL Extractor</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Paste a job URL, extract readable text, and review changes in diff view.
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-medium text-foreground">Job URL Extractor</h2>
+          </div>
+          <div className="w-36 shrink-0">
+            <Select
+              value={selectedProfileId}
+              onValueChange={onSelectProfile}
+              disabled={isSelectingProfile}
+            >
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue placeholder="Base profile" />
+              </SelectTrigger>
+              <SelectContent>
+                {profileOptions.map((profile) => (
+                  <SelectItem key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
       </div>
 
       <ScrollArea className="flex-1">

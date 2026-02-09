@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Sidebar } from "./sidebar";
 import { JobInputPanel } from "@/components/panels/job-input-panel";
 import { ResumeViewer } from "@/components/panels/resume-viewer";
@@ -12,8 +12,17 @@ import {
   buildResumeDataFromImport,
   setResumeValueAtPath,
 } from "@/lib/resume-analysis";
+import {
+  getSelectedResumeData,
+  normalizeResumeProfilesData,
+} from "@/lib/resume-profiles";
 import { createId } from "@/lib/id";
-import type { FieldFeedback, ResumeAnalysisState, ResumeData } from "@/types";
+import type {
+  FieldFeedback,
+  ResumeAnalysisState,
+  ResumeData,
+  ResumeProfilesData,
+} from "@/types";
 
 export interface ApplicationFormData {
   jobUrl: string;
@@ -323,9 +332,12 @@ export function AppLayout() {
   const [requirementsDebugPayload, setRequirementsDebugPayload] = useState<
     unknown | null
   >(null);
+  const [resumeProfilesData, setResumeProfilesData] =
+    useState<ResumeProfilesData>(normalizeResumeProfilesData(DEFAULT_RESUME_DATA));
   const [defaultResumeData, setDefaultResumeData] =
     useState<ResumeData>(DEFAULT_RESUME_DATA);
   const [resumeData, setResumeData] = useState<ResumeData>(DEFAULT_RESUME_DATA);
+  const [isSelectingProfile, setIsSelectingProfile] = useState(false);
   const [resumeAnalysis, setResumeAnalysis] =
     useState<ResumeAnalysisState | null>(null);
   const [isImportingResume, setIsImportingResume] = useState(false);
@@ -388,17 +400,77 @@ export function AppLayout() {
     [formData.jobDescription]
   );
 
+  const baseProfileOptions = useMemo(
+    () =>
+      resumeProfilesData.profiles.map((profile) => ({
+        id: profile.id,
+        name: profile.name.trim() || "Untitled Profile",
+      })),
+    [resumeProfilesData.profiles]
+  );
+
+  const handleSelectBaseProfile = useCallback(
+    async (nextProfileId: string) => {
+      if (
+        !nextProfileId ||
+        nextProfileId === resumeProfilesData.selectedProfileId
+      ) {
+        return;
+      }
+
+      const nextProfilesData = normalizeResumeProfilesData({
+        ...resumeProfilesData,
+        selectedProfileId: nextProfileId,
+      });
+      const nextBaseResumeData = withResumeIntegrityGuardrails(
+        getSelectedResumeData(nextProfilesData)
+      );
+
+      setIsSelectingProfile(true);
+      setResumeProfilesData(nextProfilesData);
+      setDefaultResumeData(nextBaseResumeData);
+      setResumeData(nextBaseResumeData);
+      setResumeAnalysis(null);
+      setImportError(null);
+      setExtractedAtomicUnits([]);
+      setRequirementsDebugPayload(null);
+      setRequirementsError(null);
+      setIsDiffViewOpen(false);
+      setDiffBaseResume(null);
+
+      try {
+        const response = await fetch("/api/resume-data?mode=profiles", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(nextProfilesData),
+        });
+        if (!response.ok) {
+          throw new Error("Failed to save profile selection");
+        }
+      } catch (error) {
+        console.error("Error saving profile selection:", error);
+      } finally {
+        setIsSelectingProfile(false);
+      }
+    },
+    [resumeProfilesData]
+  );
+
   useEffect(() => {
     let isActive = true;
 
     async function loadDefaultResumeData() {
       try {
-        const response = await fetch("/api/resume-data");
+        const response = await fetch("/api/resume-data?mode=profiles");
         if (!response.ok) return;
-        const data = await response.json();
+        const data = normalizeResumeProfilesData(await response.json());
+        const selectedResumeData = withResumeIntegrityGuardrails(
+          getSelectedResumeData(data)
+        );
         if (isActive) {
-          setDefaultResumeData(data);
-          setResumeData(data);
+          setResumeProfilesData(data);
+          setDefaultResumeData(selectedResumeData);
+          setResumeData(selectedResumeData);
           setResumeAnalysis(null);
           setImportError(null);
         }
@@ -547,6 +619,16 @@ export function AppLayout() {
         );
         setResumeData(nextResumeData);
         setDefaultResumeData(nextResumeData);
+        setResumeProfilesData((current) =>
+          normalizeResumeProfilesData({
+            ...current,
+            profiles: current.profiles.map((profile) =>
+              profile.id === current.selectedProfileId
+                ? { ...profile, resumeData: nextResumeData }
+                : profile
+            ),
+          })
+        );
         setResumeAnalysis(null);
         setIsDiffViewOpen(false);
         setDiffBaseResume(null);
@@ -675,6 +757,10 @@ export function AppLayout() {
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
                 <JobInputPanel
+                  profileOptions={baseProfileOptions}
+                  selectedProfileId={resumeProfilesData.selectedProfileId}
+                  onSelectProfile={handleSelectBaseProfile}
+                  isSelectingProfile={isSelectingProfile}
                   formData={formData}
                   onChange={handleFormDataChange}
                   onExtractJobDescription={handleExtractJobDescription}
@@ -913,6 +999,10 @@ export function AppLayout() {
           <div className="min-h-0 flex-1 overflow-hidden">
             {mobileWorkspaceTab === "job" ? (
               <JobInputPanel
+                profileOptions={baseProfileOptions}
+                selectedProfileId={resumeProfilesData.selectedProfileId}
+                onSelectProfile={handleSelectBaseProfile}
+                isSelectingProfile={isSelectingProfile}
                 formData={formData}
                 onChange={handleFormDataChange}
                 onExtractJobDescription={handleExtractJobDescription}
