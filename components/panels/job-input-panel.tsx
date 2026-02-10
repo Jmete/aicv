@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ApplicationFormData,
-  ExtractedAtomicUnit,
+  ExtractedRequirement,
+  RoleFamily,
 } from "@/components/layout/app-layout";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -30,7 +31,9 @@ interface JobInputPanelProps {
   extractError: string | null;
   onExtractRequirements: () => void;
   isExtractingRequirements: boolean;
-  atomicUnits: ExtractedAtomicUnit[];
+  requirements: ExtractedRequirement[];
+  extractedRoleTitle: string;
+  extractedRoleFamily: RoleFamily | null;
   requirementsError: string | null;
   requirementsDebugPayload: unknown | null;
   isDiffViewOpen: boolean;
@@ -38,47 +41,15 @@ interface JobInputPanelProps {
   onResetResume: () => void;
 }
 
-interface ApplyPrioritySnapshot {
-  CurrentFit: number;
-  AchievableFit: number;
-  ApplyPriority: number;
-  blockerCount: number;
-  blockerWeightSum: number;
-}
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
-
-const toNumber = (value: unknown) =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
-
-const extractApplyPrioritySnapshot = (
-  payload: unknown
-): ApplyPrioritySnapshot | null => {
-  if (!isObject(payload) || !isObject(payload.applyPriority)) return null;
-  const currentFit = toNumber(payload.applyPriority.CurrentFit);
-  const achievableFit = toNumber(payload.applyPriority.AchievableFit);
-  const applyPriority = toNumber(payload.applyPriority.ApplyPriority);
-  const blockerCount = toNumber(payload.applyPriority.blockerCount);
-  const blockerWeightSum = toNumber(payload.applyPriority.blockerWeightSum);
-
-  if (
-    currentFit === null ||
-    achievableFit === null ||
-    applyPriority === null ||
-    blockerCount === null ||
-    blockerWeightSum === null
-  ) {
-    return null;
-  }
-
-  return {
-    CurrentFit: currentFit,
-    AchievableFit: achievableFit,
-    ApplyPriority: applyPriority,
-    blockerCount,
-    blockerWeightSum,
-  };
+const ROLE_FAMILY_LABELS: Record<RoleFamily, string> = {
+  data_science: "Data Science",
+  mlops: "MLOps",
+  data_engineering: "Data Engineering",
+  product: "Product",
+  audit: "Audit",
+  consulting: "Consulting",
+  governance: "Governance",
+  other: "Other",
 };
 
 export function JobInputPanel({
@@ -93,7 +64,9 @@ export function JobInputPanel({
   extractError,
   onExtractRequirements,
   isExtractingRequirements,
-  atomicUnits,
+  requirements,
+  extractedRoleTitle,
+  extractedRoleFamily,
   requirementsError,
   requirementsDebugPayload,
   isDiffViewOpen,
@@ -104,6 +77,7 @@ export function JobInputPanel({
   const canExtractRequirements = Boolean(formData.jobDescription.trim());
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [didCopyDebugJson, setDidCopyDebugJson] = useState(false);
+
   const debugJson = useMemo(
     () =>
       requirementsDebugPayload
@@ -111,10 +85,14 @@ export function JobInputPanel({
         : "",
     [requirementsDebugPayload]
   );
-  const applyPriority = useMemo(
-    () => extractApplyPrioritySnapshot(requirementsDebugPayload),
-    [requirementsDebugPayload]
-  );
+
+  const requirementStats = useMemo(() => {
+    const total = requirements.length;
+    const mustHave = requirements.filter((item) => item.mustHave).length;
+    const niceToHave = total - mustHave;
+    return { total, mustHave, niceToHave };
+  }, [requirements]);
+
   const copyDebugJson = useCallback(async () => {
     if (!debugJson) return;
     try {
@@ -259,96 +237,103 @@ export function JobInputPanel({
             <p className="text-xs font-semibold tracking-wide text-foreground">
               Prioritized Requirements
             </p>
-            {applyPriority ? (
-              <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
-                <div className="rounded-md border border-border/50 bg-background/90 p-2">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Current Fit
+
+            {extractedRoleTitle || extractedRoleFamily ? (
+              <div className="mt-2 rounded-md border border-border/50 bg-background/90 p-2 text-[10px]">
+                {extractedRoleTitle ? (
+                  <p className="truncate text-[11px] font-semibold text-foreground">
+                    {extractedRoleTitle}
                   </p>
-                  <p className="text-sm font-semibold text-foreground">
-                    {applyPriority.CurrentFit.toFixed(1)}
+                ) : null}
+                {extractedRoleFamily ? (
+                  <p className="mt-0.5 text-muted-foreground">
+                    family: {ROLE_FAMILY_LABELS[extractedRoleFamily]}
                   </p>
-                </div>
-                <div className="rounded-md border border-border/50 bg-background/90 p-2">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Achievable Fit
-                  </p>
-                  <p className="text-sm font-semibold text-foreground">
-                    {applyPriority.AchievableFit.toFixed(1)}
-                  </p>
-                </div>
-                <div className="rounded-md border border-border/50 bg-background/90 p-2">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Apply Priority
-                  </p>
-                  <p className="text-sm font-semibold text-foreground">
-                    {applyPriority.ApplyPriority.toFixed(1)}
-                  </p>
-                </div>
-                <div className="rounded-md border border-border/50 bg-background/90 p-2">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                    Blockers
-                  </p>
-                  <p className="text-sm font-semibold text-foreground">
-                    {Math.round(applyPriority.blockerCount)}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">
-                    weight {applyPriority.blockerWeightSum.toFixed(1)}
-                  </p>
-                </div>
+                ) : null}
               </div>
             ) : null}
-            {atomicUnits.length > 0 ? (
-              <div className="mt-2 grid grid-cols-1 gap-2">
-                {atomicUnits.map((item, index) => (
-                  <article
-                    key={`${item.id}-${index}`}
-                    className="rounded-md border border-border/50 bg-background/90 p-2"
-                  >
-                    <p className="truncate text-[11px] font-semibold text-foreground">
-                      {item.canonical}
+
+            {requirements.length > 0 ? (
+              <>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <div className="rounded-md border border-border/50 bg-background/90 p-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Total
                     </p>
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
-                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
-                        type: {item.type}
-                      </span>
-                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
-                        weight: {item.weight}
-                      </span>
-                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
-                        must_have: {item.mustHave ? "true" : "false"}
-                      </span>
-                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
-                        coverage: {item.coverageStatus}
-                      </span>
-                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
-                        feasibility: {item.feasibility}
-                      </span>
-                      <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
-                        matches: {item.matchedResumeRefs.length}
-                      </span>
-                    </div>
-                    {item.gaps.length > 0 ? (
-                      <p className="mt-1 truncate text-[10px] text-muted-foreground">
-                        gap: {item.gaps[0]}
-                      </p>
-                    ) : null}
-                    {item.recommendedTargets.length > 0 ? (
-                      <p className="mt-1 truncate text-[10px] text-muted-foreground">
-                        target: {item.recommendedTargets[0].resumeId}
-                        {item.recommendedTargets[0].recommendations[0]
-                          ? ` | edit: ${item.recommendedTargets[0].recommendations[0]}`
-                          : ""}
-                      </p>
-                    ) : null}
-                  </article>
-                ))}
-              </div>
+                    <p className="text-sm font-semibold text-foreground">
+                      {requirementStats.total}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-border/50 bg-background/90 p-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Must-Have
+                    </p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {requirementStats.mustHave}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-border/50 bg-background/90 p-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Nice-To-Have
+                    </p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {requirementStats.niceToHave}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-2 grid grid-cols-1 gap-2">
+                  {requirements.map((item, index) => (
+                    <article
+                      key={`${item.id}-${index}`}
+                      className="rounded-md border border-border/50 bg-background/90 p-2"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="truncate text-[11px] font-semibold text-foreground">
+                          {item.canonical}
+                        </p>
+                        <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          {item.mustHave ? "must-have" : "nice-to-have"}
+                        </span>
+                      </div>
+
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
+                          type: {item.type}
+                        </span>
+                        <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
+                          weight: {item.weight}
+                        </span>
+                      </div>
+
+                      {item.aliases.length > 0 ? (
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          aliases: {item.aliases.join(", ")}
+                        </p>
+                      ) : null}
+
+                      {item.jdEvidence.length > 0 ? (
+                        <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">
+                          {item.jdEvidence.map((evidence, evidenceIndex) => (
+                            <p
+                              key={`${item.id}-evidence-${evidenceIndex}`}
+                              className="truncate"
+                            >
+                              evidence: {evidence}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </>
             ) : (
               <p className="mt-2 text-[11px] text-muted-foreground">
-                Click &quot;Extract Requirements&quot; to generate a weighted list.
+                Click &quot;Extract Requirements&quot; to generate a prioritized list.
               </p>
             )}
+
             <div className="mt-3 border-t border-border/60 pt-2">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">

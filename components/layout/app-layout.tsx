@@ -37,7 +37,7 @@ export interface ApplicationFormData {
   jobDescription: string;
 }
 
-export type AtomicUnitType =
+export type RequirementType =
   | "tool"
   | "platform"
   | "method"
@@ -49,31 +49,30 @@ export type AtomicUnitType =
   | "education"
   | "constraint";
 
-export type CoverageStatus = "explicit" | "partial" | "none";
-export type Feasibility = "feasible" | "maybe" | "not_feasible";
+export type RoleFamily =
+  | "data_science"
+  | "mlops"
+  | "data_engineering"
+  | "product"
+  | "audit"
+  | "consulting"
+  | "governance"
+  | "other";
 
-export interface MatchedResumeRef {
-  resumeId: string;
-  excerpt: string;
-  matchStrength: number;
-}
-
-export interface RecommendedTarget {
-  resumeId: string;
-  recommendations: string[];
-}
-
-export interface ExtractedAtomicUnit {
+export interface ExtractedRequirement {
   id: string;
   canonical: string;
-  type: AtomicUnitType;
+  type: RequirementType;
   weight: number;
   mustHave: boolean;
-  coverageStatus: CoverageStatus;
-  feasibility: Feasibility;
-  matchedResumeRefs: MatchedResumeRef[];
-  recommendedTargets: RecommendedTarget[];
-  gaps: string[];
+  aliases: string[];
+  jdEvidence: string[];
+}
+
+export interface ExtractedRequirementsPayload {
+  roleTitle: string;
+  roleFamily: RoleFamily;
+  requirements: ExtractedRequirement[];
 }
 
 const initialFormData: ApplicationFormData = {
@@ -93,7 +92,7 @@ const clampWeight = (value: number) =>
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-const ATOMIC_UNIT_TYPES: AtomicUnitType[] = [
+const REQUIREMENT_TYPES: RequirementType[] = [
   "tool",
   "platform",
   "method",
@@ -106,20 +105,23 @@ const ATOMIC_UNIT_TYPES: AtomicUnitType[] = [
   "constraint",
 ];
 
-const COVERAGE_STATUSES: CoverageStatus[] = ["explicit", "partial", "none"];
-const FEASIBILITY_VALUES: Feasibility[] = ["feasible", "maybe", "not_feasible"];
+const ROLE_FAMILIES: RoleFamily[] = [
+  "data_science",
+  "mlops",
+  "data_engineering",
+  "product",
+  "audit",
+  "consulting",
+  "governance",
+  "other",
+];
 
-const isAtomicUnitType = (value: unknown): value is AtomicUnitType =>
+const isRequirementType = (value: unknown): value is RequirementType =>
   typeof value === "string" &&
-  ATOMIC_UNIT_TYPES.includes(value as AtomicUnitType);
+  REQUIREMENT_TYPES.includes(value as RequirementType);
 
-const isCoverageStatus = (value: unknown): value is CoverageStatus =>
-  typeof value === "string" &&
-  COVERAGE_STATUSES.includes(value as CoverageStatus);
-
-const isFeasibility = (value: unknown): value is Feasibility =>
-  typeof value === "string" &&
-  FEASIBILITY_VALUES.includes(value as Feasibility);
+const isRoleFamily = (value: unknown): value is RoleFamily =>
+  typeof value === "string" && ROLE_FAMILIES.includes(value as RoleFamily);
 
 const normalizeStringArray = (
   values: unknown,
@@ -142,108 +144,9 @@ const normalizeStringArray = (
   return output;
 };
 
-const normalizeMatchedResumeRefs = (values: unknown): MatchedResumeRef[] => {
-  if (!Array.isArray(values)) return [];
-  const deduped = new Map<string, MatchedResumeRef>();
-  for (const value of values) {
-    if (!isObject(value)) continue;
-    const excerptValue = value.excerpt;
-    const resumeIdValue = value.resumeId;
-    const matchStrengthValue = value.matchStrength;
-    if (
-      typeof excerptValue !== "string" ||
-      typeof resumeIdValue !== "string" ||
-      typeof matchStrengthValue !== "number"
-    ) {
-      continue;
-    }
-    const excerpt = normalizeComparable(excerptValue).slice(0, 240);
-    const resumeId = normalizeComparable(resumeIdValue).slice(0, 80);
-    if (!resumeId && !excerpt) continue;
-    const normalized = {
-      resumeId,
-      excerpt,
-      matchStrength: Math.max(
-        0,
-        Math.min(1, Math.round(matchStrengthValue * 1000) / 1000)
-      ),
-    };
-    const key = `${normalized.resumeId.toLowerCase()}|${normalized.excerpt.toLowerCase()}`;
-    const existing = deduped.get(key);
-    if (!existing || normalized.matchStrength > existing.matchStrength) {
-      deduped.set(key, normalized);
-    }
-  }
-  return Array.from(deduped.values())
-    .sort((a, b) => b.matchStrength - a.matchStrength)
-    .slice(0, 3);
-};
+const normalizeRequirements = (items: unknown[]): ExtractedRequirement[] => {
+  const deduped = new Map<string, ExtractedRequirement>();
 
-const normalizeRecommendedTargets = (
-  values: unknown,
-  matchedResumeRefs: MatchedResumeRef[],
-  canonical: string,
-  gaps: string[]
-): RecommendedTarget[] => {
-  const deduped = new Map<string, RecommendedTarget>();
-  if (Array.isArray(values)) {
-    for (const value of values) {
-      if (!isObject(value)) continue;
-      const resumeIdValue = value.resumeId;
-      if (typeof resumeIdValue !== "string") continue;
-      const resumeId = normalizeComparable(resumeIdValue).slice(0, 80);
-      if (!resumeId) continue;
-      const recommendations = normalizeStringArray(value.recommendations, 5, 180);
-      if (!recommendations.length) continue;
-      const existing = deduped.get(resumeId);
-      if (!existing) {
-        deduped.set(resumeId, { resumeId, recommendations });
-        continue;
-      }
-      deduped.set(resumeId, {
-        resumeId,
-        recommendations: normalizeStringArray(
-          [...existing.recommendations, ...recommendations],
-          5,
-          180
-        ),
-      });
-    }
-  }
-
-  const normalizedTargets = Array.from(deduped.values()).slice(0, 10);
-  if (normalizedTargets.length > 0) return normalizedTargets;
-
-  const fallbackRecommendations = normalizeStringArray(
-    [
-      gaps[0],
-      canonical
-        ? `Add truthful resume wording that explicitly demonstrates ${canonical}.`
-        : "",
-    ],
-    3,
-    180
-  );
-  if (!fallbackRecommendations.length) return [];
-
-  const fallbackResumeIds = Array.from(
-    new Set(
-      matchedResumeRefs
-        .slice(0, 2)
-        .map((ref) => normalizeComparable(ref.resumeId).slice(0, 80))
-        .filter((resumeId) => resumeId.length > 0)
-    )
-  );
-
-  return fallbackResumeIds
-    .map((resumeId) => ({
-      resumeId,
-      recommendations: fallbackRecommendations,
-    }));
-};
-
-const normalizeAtomicUnits = (items: unknown[]): ExtractedAtomicUnit[] => {
-  const deduped = new Map<string, ExtractedAtomicUnit>();
   for (const item of items) {
     if (!isObject(item)) continue;
     const idValue = item.id;
@@ -251,59 +154,80 @@ const normalizeAtomicUnits = (items: unknown[]): ExtractedAtomicUnit[] => {
     const typeValue = item.type;
     const weightValue = item.weight;
     const mustHaveValue = item.mustHave;
-    const coverageStatusValue = item.coverageStatus;
-    const feasibilityValue = item.feasibility;
+
     if (
       typeof idValue !== "string" ||
       typeof canonicalValue !== "string" ||
       typeof weightValue !== "number" ||
       typeof mustHaveValue !== "boolean" ||
-      !isCoverageStatus(coverageStatusValue) ||
-      !isFeasibility(feasibilityValue) ||
-      !isAtomicUnitType(typeValue)
+      !isRequirementType(typeValue)
     ) {
       continue;
     }
+
     const id = normalizeComparable(idValue);
     const canonical = normalizeComparable(canonicalValue);
     if (!id || !canonical) continue;
-    const matchedResumeRefs = normalizeMatchedResumeRefs(item.matchedResumeRefs);
-    const gaps = normalizeStringArray(item.gaps, 10, 160);
-    const next = {
+
+    const next: ExtractedRequirement = {
       id,
       canonical,
       type: typeValue,
       weight: clampWeight(weightValue),
       mustHave: mustHaveValue,
-      coverageStatus: coverageStatusValue,
-      feasibility: feasibilityValue,
-      matchedResumeRefs,
-      recommendedTargets: normalizeRecommendedTargets(
-        item.recommendedTargets,
-        matchedResumeRefs,
-        canonical,
-        gaps
+      aliases: normalizeStringArray(item.aliases, 5, 80).filter(
+        (value) => value.toLowerCase() !== canonical.toLowerCase()
       ),
-      gaps,
+      jdEvidence: normalizeStringArray(item.jdEvidence, 3, 180),
     };
+
     const key = canonical.toLowerCase();
     const existing = deduped.get(key);
-    if (!existing || next.weight > existing.weight) {
+    if (!existing) {
       deduped.set(key, next);
+      continue;
     }
+
+    deduped.set(key, {
+      ...next,
+      mustHave: existing.mustHave || next.mustHave,
+      aliases: normalizeStringArray(
+        [...existing.aliases, ...next.aliases],
+        5,
+        80
+      ).filter((value) => value.toLowerCase() !== canonical.toLowerCase()),
+      jdEvidence: normalizeStringArray(
+        [...existing.jdEvidence, ...next.jdEvidence],
+        3,
+        180
+      ),
+    });
   }
+
   return Array.from(deduped.values()).sort((a, b) => {
+    if (a.mustHave !== b.mustHave) return a.mustHave ? -1 : 1;
     if (b.weight !== a.weight) return b.weight - a.weight;
     return a.canonical.localeCompare(b.canonical);
   });
 };
 
-const extractAtomicUnitsFromPayload = (payload: unknown) => {
-  if (!isObject(payload)) return [];
-  if (!Array.isArray(payload.atomicUnits)) return [];
-  return normalizeAtomicUnits(payload.atomicUnits);
-};
+const extractRequirementsPayload = (
+  payload: unknown
+): ExtractedRequirementsPayload | null => {
+  if (!isObject(payload)) return null;
+  if (typeof payload.roleTitle !== "string") return null;
+  if (!isRoleFamily(payload.roleFamily)) return null;
+  if (!Array.isArray(payload.requirements)) return null;
 
+  const requirements = normalizeRequirements(payload.requirements);
+  if (!requirements.length) return null;
+
+  return {
+    roleTitle: normalizeComparable(payload.roleTitle).slice(0, 160),
+    roleFamily: payload.roleFamily,
+    requirements,
+  };
+};
 const ensureUniqueIds = <T extends { id: string }>(items: T[]): T[] => {
   const seen = new Set<string>();
   return items.map((item) => {
@@ -329,9 +253,8 @@ export function AppLayout() {
   const [isExtractingJobDescription, setIsExtractingJobDescription] =
     useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
-  const [extractedAtomicUnits, setExtractedAtomicUnits] = useState<
-    ExtractedAtomicUnit[]
-  >([]);
+  const [extractedRequirementsPayload, setExtractedRequirementsPayload] =
+    useState<ExtractedRequirementsPayload | null>(null);
   const [isExtractingRequirements, setIsExtractingRequirements] =
     useState(false);
   const [requirementsError, setRequirementsError] = useState<string | null>(
@@ -385,7 +308,7 @@ export function AppLayout() {
     setIsExtractingRequirements(false);
     setExtractError(null);
     setRequirementsError(null);
-    setExtractedAtomicUnits([]);
+    setExtractedRequirementsPayload(null);
     setRequirementsDebugPayload(null);
     setResumeData(defaultResumeData);
     setResumeAnalysis(null);
@@ -418,7 +341,7 @@ export function AppLayout() {
         normalizeComparable(data.jobDescription) !==
         normalizeComparable(formData.jobDescription)
       ) {
-        setExtractedAtomicUnits([]);
+        setExtractedRequirementsPayload(null);
         setRequirementsDebugPayload(null);
       }
       setFormData(data);
@@ -460,7 +383,7 @@ export function AppLayout() {
       setResumeData(nextBaseResumeData);
       setResumeAnalysis(null);
       setImportError(null);
-      setExtractedAtomicUnits([]);
+      setExtractedRequirementsPayload(null);
       setRequirementsDebugPayload(null);
       setRequirementsError(null);
       setIsDiffViewOpen(false);
@@ -549,7 +472,7 @@ export function AppLayout() {
         ...current,
         jobDescription: payload.jobDescription,
       }));
-      setExtractedAtomicUnits([]);
+      setExtractedRequirementsPayload(null);
       setRequirementsError(null);
       setRequirementsDebugPayload(null);
     } catch (error) {
@@ -574,12 +497,13 @@ export function AppLayout() {
     setIsExtractingRequirements(true);
     setRequirementsError(null);
     setRequirementsDebugPayload(null);
+    setExtractedRequirementsPayload(null);
 
     try {
       const response = await fetch("/api/extract-requirements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobDescription, resumeData }),
+        body: JSON.stringify({ jobDescription }),
       });
       const rawText = await response.text();
       let payload: any = {};
@@ -602,11 +526,11 @@ export function AppLayout() {
             : "";
         throw new Error(details ? `${baseError} ${details}` : baseError);
       }
-      const parsedAtomicUnits = extractAtomicUnitsFromPayload(payload);
-      if (!parsedAtomicUnits.length) {
+      const parsedRequirementsPayload = extractRequirementsPayload(payload);
+      if (!parsedRequirementsPayload) {
         throw new Error("Extraction failed. No requirements were returned.");
       }
-      setExtractedAtomicUnits(parsedAtomicUnits);
+      setExtractedRequirementsPayload(parsedRequirementsPayload);
     } catch (error) {
       console.error("Error extracting requirements:", error);
       setRequirementsError(
@@ -615,7 +539,7 @@ export function AppLayout() {
     } finally {
       setIsExtractingRequirements(false);
     }
-  }, [formData.jobDescription, resumeData]);
+  }, [formData.jobDescription]);
 
   const handleImportResume = useCallback(async (file: File) => {
     setIsImportingResume(true);
@@ -753,6 +677,9 @@ export function AppLayout() {
   }, []);
 
   const showDiffView = Boolean(isDiffViewOpen && diffBaseResume);
+  const extractedRequirements = extractedRequirementsPayload?.requirements ?? [];
+  const extractedRoleTitle = extractedRequirementsPayload?.roleTitle ?? "";
+  const extractedRoleFamily = extractedRequirementsPayload?.roleFamily ?? null;
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-background pb-20 md:pb-0">
@@ -789,7 +716,9 @@ export function AppLayout() {
                   extractError={extractError}
                   onExtractRequirements={handleExtractRequirements}
                   isExtractingRequirements={isExtractingRequirements}
-                  atomicUnits={extractedAtomicUnits}
+                  requirements={extractedRequirements}
+                  extractedRoleTitle={extractedRoleTitle}
+                  extractedRoleFamily={extractedRoleFamily}
                   requirementsError={requirementsError}
                   requirementsDebugPayload={requirementsDebugPayload}
                   isDiffViewOpen={showDiffView}
@@ -1096,7 +1025,9 @@ export function AppLayout() {
                 extractError={extractError}
                 onExtractRequirements={handleExtractRequirements}
                 isExtractingRequirements={isExtractingRequirements}
-                atomicUnits={extractedAtomicUnits}
+                requirements={extractedRequirements}
+                extractedRoleTitle={extractedRoleTitle}
+                extractedRoleFamily={extractedRoleFamily}
                 requirementsError={requirementsError}
                 requirementsDebugPayload={requirementsDebugPayload}
                 isDiffViewOpen={showDiffView}
