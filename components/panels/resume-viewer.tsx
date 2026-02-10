@@ -135,6 +135,21 @@ interface ResumeViewerProps {
   autoScaleToFit?: boolean;
   documentTab?: "resume" | "cover-letter";
   onDocumentTabChange?: (tab: "resume" | "cover-letter") => void;
+  documentTabControl?: "tabs" | "select" | "none";
+  toolbarActionsSlot?: ReactNode;
+  showToolbarActionsInReadOnly?: boolean;
+  onToolbarActionsReady?: (actions: {
+    exportPdf: () => void;
+    togglePrintPreview: () => void;
+    toggleDebug: () => void;
+    setPrintPreviewMode: (enabled: boolean) => void;
+    setDebugOpen: (open: boolean) => void;
+  }) => void;
+  onToolbarStateChange?: (state: {
+    isPrintPreviewMode: boolean;
+    isDebugOpen: boolean;
+    isExportingPdf: boolean;
+  }) => void;
   highlightFieldPaths?: string[];
   highlightTone?: "before" | "after";
 }
@@ -811,6 +826,11 @@ export function ResumeViewer({
   autoScaleToFit = false,
   documentTab,
   onDocumentTabChange,
+  documentTabControl = "tabs",
+  toolbarActionsSlot,
+  showToolbarActionsInReadOnly = false,
+  onToolbarActionsReady,
+  onToolbarStateChange,
   highlightFieldPaths,
   highlightTone = "after",
 }: ResumeViewerProps) {
@@ -840,6 +860,13 @@ export function ResumeViewer({
   );
 
   const canShowCoverLetterTab = !readOnly || allowCoverLetterTabInReadOnly;
+  const shouldShowDocumentControl =
+    documentTabControl !== "none" && canShowCoverLetterTab;
+  const shouldShowToolbarActions = !readOnly || showToolbarActionsInReadOnly;
+  const shouldShowTopBar =
+    shouldShowDocumentControl ||
+    shouldShowToolbarActions ||
+    Boolean(toolbarActionsSlot);
 
   useEffect(() => {
     if (!readOnly) return;
@@ -848,6 +875,22 @@ export function ResumeViewer({
       setActiveDocumentTab("resume");
     }
   }, [allowCoverLetterTabInReadOnly, isDocumentTabControlled, readOnly]);
+
+  const handleDocumentTabChange = useCallback(
+    (nextTab: "resume" | "cover-letter") => {
+      if (readOnly && !allowCoverLetterTabInReadOnly) return;
+      if (!isDocumentTabControlled) {
+        setActiveDocumentTab(nextTab);
+      }
+      onDocumentTabChange?.(nextTab);
+    },
+    [
+      allowCoverLetterTabInReadOnly,
+      isDocumentTabControlled,
+      onDocumentTabChange,
+      readOnly,
+    ]
+  );
 
   const feedbackMap = useMemo(() => {
     if (!analysis?.fieldFeedback) {
@@ -1390,6 +1433,61 @@ export function ResumeViewer({
     isPrintPreviewMode,
     metadata.fullName,
     resolvedPageSettings.paperSize,
+  ]);
+
+  const handleSetPrintPreviewMode = useCallback((enabled: boolean) => {
+    setIsPrintPreviewMode(enabled);
+  }, []);
+
+  const handleTogglePrintPreview = useCallback(() => {
+    setIsPrintPreviewMode((current) => !current);
+  }, []);
+
+  const handleSetDebugOpen = useCallback((open: boolean) => {
+    setIsDebugOpen(open);
+    if (open) {
+      setActiveDebugTab("resume-json");
+    }
+  }, []);
+
+  const handleToggleDebug = useCallback(() => {
+    setIsDebugOpen((current) => {
+      const next = !current;
+      if (next) {
+        setActiveDebugTab("resume-json");
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    onToolbarActionsReady?.({
+      exportPdf: exportResumeAsPdf,
+      togglePrintPreview: handleTogglePrintPreview,
+      toggleDebug: handleToggleDebug,
+      setPrintPreviewMode: handleSetPrintPreviewMode,
+      setDebugOpen: handleSetDebugOpen,
+    });
+  }, [
+    exportResumeAsPdf,
+    handleSetDebugOpen,
+    handleSetPrintPreviewMode,
+    handleToggleDebug,
+    handleTogglePrintPreview,
+    onToolbarActionsReady,
+  ]);
+
+  useEffect(() => {
+    onToolbarStateChange?.({
+      isPrintPreviewMode,
+      isDebugOpen,
+      isExportingPdf,
+    });
+  }, [
+    isDebugOpen,
+    isExportingPdf,
+    isPrintPreviewMode,
+    onToolbarStateChange,
   ]);
 
   const clearSelectionState = () => {
@@ -4570,7 +4668,7 @@ export function ResumeViewer({
                 variant="ghost"
                 size="sm"
                 className="h-7 px-2 text-[11px]"
-                onClick={() => setIsDebugOpen(false)}
+                onClick={() => handleSetDebugOpen(false)}
               >
                 Close
               </Button>
@@ -4607,116 +4705,139 @@ export function ResumeViewer({
       )}
       <Tabs
         value={resolvedDocumentTab}
-        onValueChange={(value) => {
-          if (readOnly && !allowCoverLetterTabInReadOnly) return;
-          const nextTab = value as "resume" | "cover-letter";
-          if (!isDocumentTabControlled) {
-            setActiveDocumentTab(nextTab);
-          }
-          onDocumentTabChange?.(nextTab);
-        }}
+        onValueChange={(value) =>
+          handleDocumentTabChange(value as "resume" | "cover-letter")
+        }
         className="flex h-full flex-col"
       >
-        <div className="flex min-h-[52px] flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:h-[52px] sm:flex-nowrap sm:px-4 sm:py-0">
-          <TabsList className="h-9 flex-1 justify-start gap-3 overflow-x-auto bg-transparent p-0 text-foreground sm:h-12 sm:gap-4">
-            <TabsTrigger
-              value="resume"
-              className="shrink-0 rounded-none px-0 py-2 text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none sm:pb-3 sm:pt-3"
-            >
-              Resume
-            </TabsTrigger>
-            {canShowCoverLetterTab ? (
-              <TabsTrigger
-                value="cover-letter"
-                className="shrink-0 rounded-none px-0 py-2 text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none sm:pb-3 sm:pt-3"
-              >
-                Cover Letter
-              </TabsTrigger>
+        {shouldShowTopBar ? (
+          <div className="flex min-h-[52px] flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:h-[52px] sm:flex-nowrap sm:px-4 sm:py-0">
+            {shouldShowDocumentControl ? (
+              documentTabControl === "select" ? (
+                <ToggleGroup
+                  type="single"
+                  value={resolvedDocumentTab}
+                  onValueChange={(value) =>
+                    value
+                      ? handleDocumentTabChange(
+                          value as "resume" | "cover-letter"
+                        )
+                      : undefined
+                  }
+                  className="h-8 rounded-md border border-border/70 bg-muted/30 p-1"
+                >
+                  <ToggleGroupItem value="resume" className="h-6 px-3 text-[11px]">
+                    Resume
+                  </ToggleGroupItem>
+                  {canShowCoverLetterTab ? (
+                    <ToggleGroupItem
+                      value="cover-letter"
+                      className="h-6 px-3 text-[11px]"
+                    >
+                      Cover Letter
+                    </ToggleGroupItem>
+                  ) : null}
+                </ToggleGroup>
+              ) : (
+                <TabsList className="h-9 flex-1 justify-start gap-3 overflow-x-auto bg-transparent p-0 text-foreground sm:h-12 sm:gap-4">
+                  <TabsTrigger
+                    value="resume"
+                    className="shrink-0 rounded-none px-0 py-2 text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none sm:pb-3 sm:pt-3"
+                  >
+                    Resume
+                  </TabsTrigger>
+                  {canShowCoverLetterTab ? (
+                    <TabsTrigger
+                      value="cover-letter"
+                      className="shrink-0 rounded-none px-0 py-2 text-foreground data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none sm:pb-3 sm:pt-3"
+                    >
+                      Cover Letter
+                    </TabsTrigger>
+                  ) : null}
+                </TabsList>
+              )
             ) : null}
-          </TabsList>
-          {!readOnly ? (
-            <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:gap-2">
-              {maxResumePages && isPrintPreviewMode ? (
-                <div
-                  className={cn(
-                    "rounded border px-2 py-1 text-[10px]",
-                    resumePageOverflow
-                      ? "border-destructive/50 bg-destructive/10 text-destructive"
-                      : "border-border bg-muted/30 text-muted-foreground"
-                  )}
-                >
-                  Resume {resumePageCount}/{maxResumePages}
-                </div>
-              ) : null}
-              {maxResumePages && isPrintPreviewMode ? (
-                <div
-                  className={cn(
-                    "rounded border px-2 py-1 text-[10px]",
-                    coverLetterPageOverflow
-                      ? "border-destructive/50 bg-destructive/10 text-destructive"
-                      : "border-border bg-muted/30 text-muted-foreground"
-                  )}
-                >
-                  Cover {coverLetterPageCount}/1
-                </div>
-              ) : null}
-              {maxResumePages && !isPrintPreviewMode ? (
-                <div className="hidden rounded border border-border bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground sm:block">
-                  Enable Print Preview for export page count
-                </div>
-              ) : null}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 px-2 text-[11px]"
-                onClick={exportResumeAsPdf}
-                disabled={isExportingPdf}
-              >
-                {isExportingPdf ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <FileDown className="h-3.5 w-3.5" />
-                )}
-                {isExportingPdf ? "Preparing..." : "Export PDF"}
-              </Button>
-              <Button
-                variant={isPrintPreviewMode ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 gap-1.5 px-2 text-[11px]"
-                onClick={() => setIsPrintPreviewMode((current) => !current)}
-                aria-label={
-                  isPrintPreviewMode
-                    ? "Exit print preview mode"
-                    : "Enable print preview mode"
-                }
-                aria-pressed={isPrintPreviewMode}
-              >
-                {isPrintPreviewMode ? (
-                  <EyeOff className="h-3.5 w-3.5" />
-                ) : (
-                  <Eye className="h-3.5 w-3.5" />
-                )}
-                {isPrintPreviewMode ? "Exit Preview" : "Print Preview"}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-[11px]"
-                onClick={() => {
-                  setIsDebugOpen((current) => {
-                    const next = !current;
-                    if (next) {
-                      setActiveDebugTab("resume-json");
-                    }
-                    return next;
-                  });
-                }}
-              >
-                {isDebugOpen ? "Hide Debug" : "Debug"}
-              </Button>
-            </div>
-          ) : null}
-        </div>
+            {shouldShowToolbarActions || toolbarActionsSlot ? (
+              <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:gap-2">
+                {toolbarActionsSlot}
+                {shouldShowToolbarActions ? (
+                  <>
+                    {maxResumePages && isPrintPreviewMode ? (
+                      <div
+                        className={cn(
+                          "rounded border px-2 py-1 text-[10px]",
+                          resumePageOverflow
+                            ? "border-destructive/50 bg-destructive/10 text-destructive"
+                            : "border-border bg-muted/30 text-muted-foreground"
+                        )}
+                      >
+                        Resume {resumePageCount}/{maxResumePages}
+                      </div>
+                    ) : null}
+                    {maxResumePages && isPrintPreviewMode ? (
+                      <div
+                        className={cn(
+                          "rounded border px-2 py-1 text-[10px]",
+                          coverLetterPageOverflow
+                            ? "border-destructive/50 bg-destructive/10 text-destructive"
+                            : "border-border bg-muted/30 text-muted-foreground"
+                        )}
+                      >
+                        Cover {coverLetterPageCount}/1
+                      </div>
+                    ) : null}
+                    {maxResumePages && !isPrintPreviewMode ? (
+                      <div className="hidden rounded border border-border bg-muted/30 px-2 py-1 text-[10px] text-muted-foreground sm:block">
+                        Enable Print Preview for export page count
+                      </div>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1.5 px-2 text-[11px]"
+                      onClick={exportResumeAsPdf}
+                      disabled={isExportingPdf}
+                    >
+                      {isExportingPdf ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <FileDown className="h-3.5 w-3.5" />
+                      )}
+                      {isExportingPdf ? "Preparing..." : "Export PDF"}
+                    </Button>
+                    <Button
+                      variant={isPrintPreviewMode ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 gap-1.5 px-2 text-[11px]"
+                      onClick={handleTogglePrintPreview}
+                      aria-label={
+                        isPrintPreviewMode
+                          ? "Exit print preview mode"
+                          : "Enable print preview mode"
+                      }
+                      aria-pressed={isPrintPreviewMode}
+                    >
+                      {isPrintPreviewMode ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5" />
+                      )}
+                      {isPrintPreviewMode ? "Exit Preview" : "Print Preview"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={handleToggleDebug}
+                    >
+                      {isDebugOpen ? "Hide Debug" : "Debug"}
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <ScrollArea className="flex-1">
           <div className="flex justify-center p-3 sm:p-8">

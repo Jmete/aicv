@@ -1,12 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Sidebar } from "./sidebar";
 import { JobInputPanel } from "@/components/panels/job-input-panel";
 import { ResumeViewer } from "@/components/panels/resume-viewer";
 import { ResumeEditorPanel } from "@/components/resume-editor";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  FileDown,
+  Loader2,
+} from "lucide-react";
 import { DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
 import {
   buildResumeDataFromImport,
@@ -347,16 +355,29 @@ export function AppLayout() {
     coverLetterPages: 0,
     isPrintPreviewMode: false,
   });
+  const [activeDocumentTab, setActiveDocumentTab] = useState<
+    "resume" | "cover-letter"
+  >("resume");
   const [isDiffViewOpen, setIsDiffViewOpen] = useState(false);
   const [diffBaseResume, setDiffBaseResume] = useState<ResumeData | null>(null);
   const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
-  const [isRightPanelOpen, setIsRightPanelOpen] = useState(true);
+  const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<
     "job" | "preview" | "edit"
   >("preview");
   const [mobileDiffSection, setMobileDiffSection] = useState<
     "original" | "updated"
   >("updated");
+  const diffToolbarActionsRef = useRef<{
+    exportPdf: () => void;
+    togglePrintPreview: () => void;
+    toggleDebug: () => void;
+  } | null>(null);
+  const [diffToolbarState, setDiffToolbarState] = useState({
+    isPrintPreviewMode: true,
+    isDebugOpen: false,
+    isExportingPdf: false,
+  });
 
   const handleNewApplication = useCallback(() => {
     setFormData(initialFormData);
@@ -371,6 +392,13 @@ export function AppLayout() {
     setImportError(null);
     setIsDiffViewOpen(false);
     setDiffBaseResume(null);
+    setActiveDocumentTab("resume");
+    diffToolbarActionsRef.current = null;
+    setDiffToolbarState({
+      isPrintPreviewMode: true,
+      isDebugOpen: false,
+      isExportingPdf: false,
+    });
     setMobileWorkspaceTab("preview");
     setMobileDiffSection("updated");
     setPageCounts({
@@ -693,6 +721,13 @@ export function AppLayout() {
     setResumeAnalysis(null);
     setIsDiffViewOpen(false);
     setDiffBaseResume(null);
+    setActiveDocumentTab("resume");
+    diffToolbarActionsRef.current = null;
+    setDiffToolbarState({
+      isPrintPreviewMode: true,
+      isDebugOpen: false,
+      isExportingPdf: false,
+    });
   }, [defaultResumeData]);
 
   const handleToggleDiffView = useCallback(() => {
@@ -709,6 +744,12 @@ export function AppLayout() {
   const handleDiscardDiff = useCallback(() => {
     setIsDiffViewOpen(false);
     setDiffBaseResume(null);
+    diffToolbarActionsRef.current = null;
+    setDiffToolbarState({
+      isPrintPreviewMode: true,
+      isDebugOpen: false,
+      isExportingPdf: false,
+    });
   }, []);
 
   const showDiffView = Boolean(isDiffViewOpen && diffBaseResume);
@@ -775,43 +816,104 @@ export function AppLayout() {
           <div className="flex-1 overflow-hidden">
             {showDiffView && diffBaseResume ? (
               <div className="flex h-full flex-col">
-                <div className="border-b border-border bg-card/40 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-medium text-foreground">
-                        Resume Diff Review
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">
-                        Original snapshot on the left, current resume on the right.
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 text-[11px]"
-                        onClick={() => setIsDiffViewOpen(false)}
-                      >
-                        Close Diff
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="h-7 px-2 text-[11px]"
-                        onClick={handleDiscardDiff}
-                      >
-                        Discard Snapshot
-                      </Button>
-                    </div>
+                <div className="flex min-h-[52px] flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:h-[52px] sm:flex-nowrap sm:px-4 sm:py-0">
+                  <ToggleGroup
+                    type="single"
+                    value={activeDocumentTab}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      setActiveDocumentTab(value as "resume" | "cover-letter");
+                    }}
+                    className="h-8 rounded-md border border-border/70 bg-muted/30 p-1"
+                  >
+                    <ToggleGroupItem value="resume" className="h-6 px-3 text-[11px]">
+                      Resume
+                    </ToggleGroupItem>
+                    <ToggleGroupItem
+                      value="cover-letter"
+                      className="h-6 px-3 text-[11px]"
+                    >
+                      Cover Letter
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                  <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={() => setIsDiffViewOpen(false)}
+                    >
+                      Close Diff
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={handleDiscardDiff}
+                    >
+                      Discard Snapshot
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1.5 px-2 text-[11px]"
+                      onClick={() => diffToolbarActionsRef.current?.exportPdf()}
+                      disabled={diffToolbarState.isExportingPdf}
+                    >
+                      {diffToolbarState.isExportingPdf ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <FileDown className="h-3.5 w-3.5" />
+                      )}
+                      {diffToolbarState.isExportingPdf
+                        ? "Preparing..."
+                        : "Export PDF"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={
+                        diffToolbarState.isPrintPreviewMode ? "secondary" : "ghost"
+                      }
+                      size="sm"
+                      className="h-7 gap-1.5 px-2 text-[11px]"
+                      onClick={() =>
+                        diffToolbarActionsRef.current?.togglePrintPreview()
+                      }
+                      aria-label={
+                        diffToolbarState.isPrintPreviewMode
+                          ? "Exit print preview mode"
+                          : "Enable print preview mode"
+                      }
+                      aria-pressed={diffToolbarState.isPrintPreviewMode}
+                    >
+                      {diffToolbarState.isPrintPreviewMode ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5" />
+                      )}
+                      {diffToolbarState.isPrintPreviewMode
+                        ? "Exit Preview"
+                        : "Print Preview"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={() => diffToolbarActionsRef.current?.toggleDebug()}
+                    >
+                      {diffToolbarState.isDebugOpen ? "Hide Debug" : "Debug"}
+                    </Button>
                   </div>
                 </div>
                 <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                   <div className="flex min-h-0 flex-col border-r border-border">
                     <div className="border-b border-border bg-muted/20 px-3 py-2">
                       <p className="text-[11px] font-medium text-foreground">
-                        Original Resume
+                        Original Snapshot
                       </p>
                     </div>
                     <div className="min-h-0 flex-1 overflow-hidden">
@@ -823,13 +925,16 @@ export function AppLayout() {
                         readOnly
                         allowCoverLetterTabInReadOnly
                         autoScaleToFit
+                        documentTab={activeDocumentTab}
+                        onDocumentTabChange={setActiveDocumentTab}
+                        documentTabControl="none"
                       />
                     </div>
                   </div>
                   <div className="flex min-h-0 flex-col">
                     <div className="border-b border-border bg-muted/20 px-3 py-2">
                       <p className="text-[11px] font-medium text-foreground">
-                        Updated Resume
+                        Current Resume
                       </p>
                     </div>
                     <div className="min-h-0 flex-1 overflow-hidden">
@@ -841,23 +946,31 @@ export function AppLayout() {
                         readOnly
                         allowCoverLetterTabInReadOnly
                         autoScaleToFit
+                        documentTab={activeDocumentTab}
+                        onDocumentTabChange={setActiveDocumentTab}
+                        documentTabControl="none"
+                        onToolbarActionsReady={(actions) => {
+                          diffToolbarActionsRef.current = actions;
+                        }}
+                        onToolbarStateChange={setDiffToolbarState}
                       />
                     </div>
                   </div>
                 </div>
               </div>
             ) : diffBaseResume ? (
-              <div className="flex h-full flex-col">
-                <div className="flex items-center justify-between border-b border-border bg-card/40 px-3 py-2">
-                  <div>
-                    <p className="text-xs font-medium text-foreground">
-                      Diff snapshot ready
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      Open diff to compare the snapshot with your latest edits.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1">
+              <ResumeViewer
+                resumeData={resumeData}
+                onResumeUpdate={handleResumeUpdate}
+                analysis={resumeAnalysis}
+                onApplySuggestion={handleApplySuggestion}
+                maxResumePages={1}
+                onPageCountChange={setPageCounts}
+                documentTab={activeDocumentTab}
+                onDocumentTabChange={setActiveDocumentTab}
+                documentTabControl="select"
+                toolbarActionsSlot={
+                  <>
                     <Button
                       type="button"
                       variant="secondary"
@@ -876,19 +989,9 @@ export function AppLayout() {
                     >
                       Discard
                     </Button>
-                  </div>
-                </div>
-                <div className="min-h-0 flex-1">
-                  <ResumeViewer
-                    resumeData={resumeData}
-                    onResumeUpdate={handleResumeUpdate}
-                    analysis={resumeAnalysis}
-                    onApplySuggestion={handleApplySuggestion}
-                    maxResumePages={1}
-                    onPageCountChange={setPageCounts}
-                  />
-                </div>
-              </div>
+                  </>
+                }
+              />
             ) : (
               <ResumeViewer
                 resumeData={resumeData}
@@ -897,6 +1000,9 @@ export function AppLayout() {
                 onApplySuggestion={handleApplySuggestion}
                 maxResumePages={1}
                 onPageCountChange={setPageCounts}
+                documentTab={activeDocumentTab}
+                onDocumentTabChange={setActiveDocumentTab}
+                documentTabControl="select"
               />
             )}
           </div>
@@ -1070,6 +1176,10 @@ export function AppLayout() {
                     readOnly
                     allowCoverLetterTabInReadOnly
                     autoScaleToFit
+                    documentTab={activeDocumentTab}
+                    onDocumentTabChange={setActiveDocumentTab}
+                    documentTabControl="select"
+                    showToolbarActionsInReadOnly
                   />
                 </div>
               </div>
@@ -1109,6 +1219,9 @@ export function AppLayout() {
                     onApplySuggestion={handleApplySuggestion}
                     maxResumePages={1}
                     onPageCountChange={setPageCounts}
+                    documentTab={activeDocumentTab}
+                    onDocumentTabChange={setActiveDocumentTab}
+                    documentTabControl="select"
                   />
                 </div>
               </div>
@@ -1120,6 +1233,9 @@ export function AppLayout() {
                 onApplySuggestion={handleApplySuggestion}
                 maxResumePages={1}
                 onPageCountChange={setPageCounts}
+                documentTab={activeDocumentTab}
+                onDocumentTabChange={setActiveDocumentTab}
+                documentTabControl="select"
               />
             )}
           </div>
