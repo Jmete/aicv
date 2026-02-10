@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { generateObject, jsonSchema } from "ai";
-import { AI_MODELS } from "@/lib/ai-models";
+import { AI_MODELS, getOpenAIProviderOptions } from "@/lib/ai-models";
 import {
   estimateWrappedLineCount,
   type FieldLengthConstraint,
@@ -227,6 +227,7 @@ export async function POST(request: Request) {
           .filter(Boolean)
           .join("\n\n"),
         schema: responseJsonSchema,
+        providerOptions: getOpenAIProviderOptions("selectionRewrite"),
       });
 
       const validated = responseValidationSchema.safeParse(result.object);

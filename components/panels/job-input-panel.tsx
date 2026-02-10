@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   ApplicationFormData,
   ExtractedRequirement,
+  RequirementResolutionState,
   RoleFamily,
 } from "@/components/layout/app-layout";
 import { Loader2 } from "lucide-react";
@@ -36,6 +37,19 @@ interface JobInputPanelProps {
   extractedRoleFamily: RoleFamily | null;
   requirementsError: string | null;
   requirementsDebugPayload: unknown | null;
+  onAiEdit: () => void;
+  isAiEditing: boolean;
+  aiEditError: string | null;
+  aiEditProgress: {
+    completed: number;
+    total: number;
+  };
+  requirementResolutionById: Record<string, RequirementResolutionState>;
+  requirementCoverage: {
+    directlyMentioned: number;
+    total: number;
+  };
+  onRequirementHover: (path: string | null) => void;
   isDiffViewOpen: boolean;
   onToggleDiffView: () => void;
   onResetResume: () => void;
@@ -69,6 +83,13 @@ export function JobInputPanel({
   extractedRoleFamily,
   requirementsError,
   requirementsDebugPayload,
+  onAiEdit,
+  isAiEditing,
+  aiEditError,
+  aiEditProgress,
+  requirementResolutionById,
+  requirementCoverage,
+  onRequirementHover,
   isDiffViewOpen,
   onToggleDiffView,
   onResetResume,
@@ -92,6 +113,22 @@ export function JobInputPanel({
     const niceToHave = total - mustHave;
     return { total, mustHave, niceToHave };
   }, [requirements]);
+  const canAiEdit = requirements.length > 0;
+  const aiEditProgressPercent =
+    aiEditProgress.total > 0
+      ? Math.max(
+          0,
+          Math.min(100, Math.round((aiEditProgress.completed / aiEditProgress.total) * 100))
+        )
+      : 0;
+  const getMentionDotClass = (
+    mentioned: RequirementResolutionState["mentioned"] | null
+  ) => {
+    if (mentioned === "yes") return "bg-emerald-500";
+    if (mentioned === "implied") return "bg-amber-500";
+    if (mentioned === "none") return "bg-rose-500";
+    return "bg-muted-foreground/40";
+  };
 
   const copyDebugJson = useCallback(async () => {
     if (!debugJson) return;
@@ -237,6 +274,20 @@ export function JobInputPanel({
             <p className="text-xs font-semibold tracking-wide text-foreground">
               Prioritized Requirements
             </p>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                mentioned
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-amber-500" />
+                implied
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-rose-500" />
+                none
+              </span>
+            </div>
 
             {extractedRoleTitle || extractedRoleFamily ? (
               <div className="mt-2 rounded-md border border-border/50 bg-background/90 p-2 text-[10px]">
@@ -255,7 +306,7 @@ export function JobInputPanel({
 
             {requirements.length > 0 ? (
               <>
-                <div className="mt-2 grid grid-cols-3 gap-2">
+                <div className="mt-2 grid grid-cols-2 gap-2">
                   <div className="rounded-md border border-border/50 bg-background/90 p-2">
                     <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
                       Total
@@ -280,14 +331,38 @@ export function JobInputPanel({
                       {requirementStats.niceToHave}
                     </p>
                   </div>
+                  <div className="rounded-md border border-border/50 bg-background/90 p-2">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Coverage
+                    </p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {requirementCoverage.directlyMentioned}/{requirementCoverage.total}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="mt-2 grid grid-cols-1 gap-2">
-                  {requirements.map((item, index) => (
+                  {requirements.map((item, index) => {
+                    const resolution = requirementResolutionById[item.id] ?? null;
+                    const resolvedPath = resolution?.resolvedPath ?? null;
+                    const mentionState = resolution?.mentioned ?? null;
+                    return (
                     <article
                       key={`${item.id}-${index}`}
-                      className="rounded-md border border-border/50 bg-background/90 p-2"
+                      className="relative rounded-md border border-border/50 bg-background/90 p-2"
+                      onMouseEnter={() => onRequirementHover(resolvedPath)}
+                      onMouseLeave={() => onRequirementHover(null)}
                     >
+                      <span
+                        className={`absolute left-1.5 top-1.5 h-2.5 w-2.5 rounded-full ${getMentionDotClass(
+                          mentionState
+                        )}`}
+                        title={
+                          mentionState
+                            ? `Mentioned: ${mentionState}`
+                            : "Not evaluated yet"
+                        }
+                      />
                       <div className="flex items-start justify-between gap-2">
                         <p className="truncate text-[11px] font-semibold text-foreground">
                           {item.canonical}
@@ -296,6 +371,11 @@ export function JobInputPanel({
                           {item.mustHave ? "must-have" : "nice-to-have"}
                         </span>
                       </div>
+                      {resolution ? (
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          mentioned: {resolution.mentioned}
+                        </p>
+                      ) : null}
 
                       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
                         <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5">
@@ -325,7 +405,8 @@ export function JobInputPanel({
                         </div>
                       ) : null}
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               </>
             ) : (
@@ -386,21 +467,55 @@ export function JobInputPanel({
               {requirementsError}
             </div>
           ) : null}
+          {aiEditError ? (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-[11px] text-destructive">
+              {aiEditError}
+            </div>
+          ) : null}
         </div>
       </ScrollArea>
 
       <div className="border-t border-border p-4">
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2">
+          {isAiEditing ? (
+            <div className="space-y-1">
+              <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full bg-primary transition-[width] duration-200"
+                  style={{ width: `${aiEditProgressPercent}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                {aiEditProgress.completed}/{aiEditProgress.total} requirements
+              </p>
+            </div>
+          ) : null}
           <Button
-            variant="secondary"
-            className="flex-1"
-            onClick={onToggleDiffView}
+            className="w-full"
+            onClick={onAiEdit}
+            disabled={!canAiEdit || isAiEditing}
           >
-            {isDiffViewOpen ? "Close Diff" : "Open Diff"}
+            {isAiEditing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Editing...
+              </>
+            ) : (
+              "AI Edit"
+            )}
           </Button>
-          <Button variant="ghost" className="flex-1" onClick={onResetResume}>
-            Reset Resume
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              className="flex-1"
+              onClick={onToggleDiffView}
+            >
+              {isDiffViewOpen ? "Close Diff" : "Open Diff"}
+            </Button>
+            <Button variant="ghost" className="flex-1" onClick={onResetResume}>
+              Reset Resume
+            </Button>
+          </div>
         </div>
       </div>
     </div>

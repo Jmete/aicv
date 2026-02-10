@@ -15,15 +15,23 @@ import {
   FileDown,
   Loader2,
 } from "lucide-react";
-import { DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
+import { DEFAULT_RESUME_DATA, PAPER_DIMENSIONS } from "@/lib/resume-defaults";
 import {
   buildResumeDataFromImport,
+  parseFieldPath,
   setResumeValueAtPath,
 } from "@/lib/resume-analysis";
 import {
   getSelectedResumeData,
   normalizeResumeProfilesData,
 } from "@/lib/resume-profiles";
+import {
+  buildElementLengthProfile,
+  buildFieldLengthConstraint,
+  estimateWrappedLineCount,
+  getFontSafetyBuffer,
+  type ElementLengthProfile,
+} from "@/lib/line-constraints";
 import { createId } from "@/lib/id";
 import type {
   FieldFeedback,
@@ -73,6 +81,45 @@ export interface ExtractedRequirementsPayload {
   roleTitle: string;
   roleFamily: RoleFamily;
   requirements: ExtractedRequirement[];
+}
+
+interface AiEditOperation {
+  op: "replace";
+  path: string;
+  value: string;
+  index: number;
+  itemType: "text" | "bullet";
+  requirementId: string;
+  mentioned: "yes" | "implied" | "none";
+  feasibleEdit: boolean;
+  edited: boolean;
+}
+
+interface AiEditResponse {
+  operations?: AiEditOperation[];
+  report?: Array<{
+    requirementId: string;
+    canonical: string;
+    status: "already_mentioned" | "edited" | "unresolved" | "locked_no_edit";
+    mentioned: "yes" | "implied" | "none";
+    matchedPath?: string;
+    editedPath?: string;
+    reason?: string;
+  }>;
+  error?: string;
+}
+
+interface AiEditProgressState {
+  completed: number;
+  total: number;
+}
+
+export interface RequirementResolutionState {
+  requirementId: string;
+  mentioned: "yes" | "implied" | "none";
+  status: "already_mentioned" | "edited" | "unresolved" | "locked_no_edit";
+  resolvedPath: string | null;
+  reason?: string;
 }
 
 const initialFormData: ApplicationFormData = {
@@ -248,6 +295,34 @@ const withResumeIntegrityGuardrails = (data: ResumeData): ResumeData => {
   };
 };
 
+const getRawTextValueAtPath = (data: ResumeData, path: string): string => {
+  const segments = parseFieldPath(path);
+  let cursor: any = data;
+  for (const segment of segments) {
+    if (cursor == null) return "";
+    cursor = cursor[segment as keyof typeof cursor];
+  }
+  if (typeof cursor === "string") return cursor;
+  if (
+    Array.isArray(cursor) &&
+    path.endsWith(".technologies") &&
+    cursor.every((item) => typeof item === "string")
+  ) {
+    return cursor.join(", ");
+  }
+  return "";
+};
+
+const isMultilineFieldPath = (path: string) => path === "metadata.summary";
+
+const normalizeFieldText = (value: string, multiline: boolean) => {
+  const normalized = value.replace(/\u00a0/g, " ");
+  return multiline ? normalized : normalized.replace(/\n+/g, " ");
+};
+
+const getRenderedTextValueAtPath = (data: ResumeData, path: string): string =>
+  normalizeFieldText(getRawTextValueAtPath(data, path), isMultilineFieldPath(path));
+
 export function AppLayout() {
   const [formData, setFormData] = useState<ApplicationFormData>(initialFormData);
   const [isExtractingJobDescription, setIsExtractingJobDescription] =
@@ -263,6 +338,19 @@ export function AppLayout() {
   const [requirementsDebugPayload, setRequirementsDebugPayload] = useState<
     unknown | null
   >(null);
+  const [isAiEditing, setIsAiEditing] = useState(false);
+  const [aiEditError, setAiEditError] = useState<string | null>(null);
+  const [aiEditProgress, setAiEditProgress] = useState<AiEditProgressState>({
+    completed: 0,
+    total: 0,
+  });
+  const [requirementResolutionById, setRequirementResolutionById] = useState<
+    Record<string, RequirementResolutionState>
+  >({});
+  const [aiEditedPaths, setAiEditedPaths] = useState<string[]>([]);
+  const [hoveredRequirementPath, setHoveredRequirementPath] = useState<string | null>(
+    null
+  );
   const [resumeProfilesData, setResumeProfilesData] =
     useState<ResumeProfilesData>(normalizeResumeProfilesData(DEFAULT_RESUME_DATA));
   const [defaultResumeData, setDefaultResumeData] =
@@ -296,6 +384,7 @@ export function AppLayout() {
     togglePrintPreview: () => void;
     toggleDebug: () => void;
   } | null>(null);
+  const charMeasureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [diffToolbarState, setDiffToolbarState] = useState({
     isPrintPreviewMode: true,
     isDebugOpen: false,
@@ -310,6 +399,12 @@ export function AppLayout() {
     setRequirementsError(null);
     setExtractedRequirementsPayload(null);
     setRequirementsDebugPayload(null);
+    setIsAiEditing(false);
+    setAiEditError(null);
+    setAiEditProgress({ completed: 0, total: 0 });
+    setRequirementResolutionById({});
+    setAiEditedPaths([]);
+    setHoveredRequirementPath(null);
     setResumeData(defaultResumeData);
     setResumeAnalysis(null);
     setImportError(null);
@@ -343,10 +438,14 @@ export function AppLayout() {
       ) {
         setExtractedRequirementsPayload(null);
         setRequirementsDebugPayload(null);
+        setRequirementResolutionById({});
+        setAiEditedPaths([]);
+        setHoveredRequirementPath(null);
       }
       setFormData(data);
       setExtractError(null);
       setRequirementsError(null);
+      setAiEditError(null);
     },
     [formData.jobDescription]
   );
@@ -386,6 +485,12 @@ export function AppLayout() {
       setExtractedRequirementsPayload(null);
       setRequirementsDebugPayload(null);
       setRequirementsError(null);
+      setAiEditError(null);
+      setIsAiEditing(false);
+      setAiEditProgress({ completed: 0, total: 0 });
+      setRequirementResolutionById({});
+      setAiEditedPaths([]);
+      setHoveredRequirementPath(null);
       setIsDiffViewOpen(false);
       setDiffBaseResume(null);
 
@@ -475,6 +580,9 @@ export function AppLayout() {
       setExtractedRequirementsPayload(null);
       setRequirementsError(null);
       setRequirementsDebugPayload(null);
+      setRequirementResolutionById({});
+      setAiEditedPaths([]);
+      setHoveredRequirementPath(null);
     } catch (error) {
       console.error("Error extracting job description:", error);
       setExtractError(
@@ -487,6 +595,178 @@ export function AppLayout() {
     }
   }, [formData.jobUrl]);
 
+  const parsePxValue = useCallback((rawValue: string): number => {
+    if (!rawValue || rawValue === "normal") return 0;
+    const parsed = Number.parseFloat(rawValue);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }, []);
+
+  const getFallbackContentWidthPx = useCallback(() => {
+    const pageSettings = resumeData.pageSettings ?? DEFAULT_RESUME_DATA.pageSettings;
+    const paperSize = pageSettings.paperSize ?? DEFAULT_RESUME_DATA.pageSettings.paperSize;
+    const margins =
+      pageSettings.resumeMargins ??
+      pageSettings.margins ??
+      DEFAULT_RESUME_DATA.pageSettings.resumeMargins;
+    const paper = PAPER_DIMENSIONS[paperSize];
+    const contentWidthMm = paper.width - margins.left - margins.right;
+    const pxPerMm = 72 / 25.4;
+    return contentWidthMm * pxPerMm;
+  }, [resumeData.pageSettings]);
+
+  const measureCharWidth = useCallback(
+    (options: {
+      element: HTMLElement;
+      text: string;
+      fontShorthand: string;
+      fontFamily: string;
+      fontSizePx: number;
+      lineHeightPx: number;
+      letterSpacingPx: number;
+    }) => {
+      const {
+        element,
+        text,
+        fontShorthand,
+        fontFamily,
+        fontSizePx,
+        lineHeightPx,
+        letterSpacingPx,
+      } = options;
+      if (typeof document === "undefined") return 8;
+      if (!charMeasureCanvasRef.current) {
+        charMeasureCanvasRef.current = document.createElement("canvas");
+      }
+      const context = charMeasureCanvasRef.current.getContext("2d");
+      if (!context) return 8;
+      context.font = fontShorthand;
+      const sample =
+        "the quick brown fox jumps over the lazy dog and ships stable features ";
+      const measuredSampleWidth = context.measureText(sample).width / sample.length;
+
+      const normalizedFamily = fontFamily.toLowerCase();
+      const heuristicRatio = normalizedFamily.includes("mono")
+        ? 0.58
+        : normalizedFamily.includes("georgia") ||
+            normalizedFamily.includes("times") ||
+            normalizedFamily.includes("serif")
+          ? 0.5
+          : 0.46;
+      const heuristicWidth = fontSizePx * heuristicRatio;
+
+      const normalizedText = text.replace(/\s+/g, " ").trim();
+      const elementRect = element.getBoundingClientRect();
+      const appearsSingleLine = elementRect.height <= lineHeightPx * 1.35;
+      const observedWidth =
+        appearsSingleLine && normalizedText.length >= 12
+          ? (elementRect.width / normalizedText.length) * 1.1
+          : Number.POSITIVE_INFINITY;
+
+      const candidateWidths = [measuredSampleWidth, heuristicWidth, observedWidth]
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const baseWidth =
+        candidateWidths.length > 0
+          ? Math.min(...candidateWidths)
+          : measuredSampleWidth || heuristicWidth || 8;
+      return Math.max(2, baseWidth + letterSpacingPx);
+    },
+    []
+  );
+
+  const resolveAvailableWidthPx = useCallback(
+    (element: HTMLElement, fallbackWidthPx: number) => {
+      const selfWidth = element.getBoundingClientRect().width;
+      const parentWidth = element.parentElement?.getBoundingClientRect().width ?? 0;
+      const grandParentWidth =
+        element.parentElement?.parentElement?.getBoundingClientRect().width ?? 0;
+      const candidate = Math.max(selfWidth, parentWidth, grandParentWidth);
+      const width = candidate > 0 ? candidate : fallbackWidthPx;
+      return Math.max(80, Math.min(width, fallbackWidthPx));
+    },
+    []
+  );
+
+  const collectElementLengthProfiles = useCallback((): ElementLengthProfile[] => {
+    if (typeof document === "undefined") return [];
+
+    const elements = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-field-path]")
+    );
+    if (elements.length === 0) return [];
+
+    // Keep the last occurrence of each path so diff views prefer the current (right) pane.
+    const elementByPath = new Map<string, HTMLElement>();
+    for (const element of elements) {
+      const path = element.dataset.fieldPath?.trim();
+      if (!path) continue;
+      elementByPath.set(path, element);
+    }
+
+    const fallbackWidthPx = getFallbackContentWidthPx();
+    const profiles: ElementLengthProfile[] = [];
+
+    for (const [path, element] of elementByPath.entries()) {
+      const text = getRenderedTextValueAtPath(resumeData, path);
+      const computed = window.getComputedStyle(element);
+      const fontSizePx = Math.max(8, parsePxValue(computed.fontSize));
+      const fontFamily = computed.fontFamily || "serif";
+      const fontShorthand =
+        computed.font && computed.font !== ""
+          ? computed.font
+          : `${computed.fontWeight} ${computed.fontSize} ${fontFamily}`;
+      const lineHeightPx = parsePxValue(computed.lineHeight) || fontSizePx * 1.25;
+      const letterSpacingPx = parsePxValue(computed.letterSpacing);
+      const availableWidthPx = resolveAvailableWidthPx(element, fallbackWidthPx);
+      const safetyBuffer = getFontSafetyBuffer(fontFamily);
+      const charWidthPx = measureCharWidth({
+        element,
+        text,
+        fontShorthand,
+        fontFamily,
+        fontSizePx,
+        lineHeightPx,
+        letterSpacingPx,
+      });
+
+      const oneLineConstraint = buildFieldLengthConstraint(
+        {
+          availableWidthPx,
+          fontSizePx,
+          fontFamily,
+          charWidthPx,
+          safetyBuffer,
+        },
+        1
+      );
+      if (!oneLineConstraint) continue;
+      const usedLineCount = Math.max(
+        1,
+        estimateWrappedLineCount(text, oneLineConstraint.maxCharsPerLine)
+      );
+      const elementConstraint = buildFieldLengthConstraint(
+        {
+          availableWidthPx,
+          fontSizePx,
+          fontFamily,
+          charWidthPx,
+          safetyBuffer,
+        },
+        usedLineCount
+      );
+      if (!elementConstraint) continue;
+
+      profiles.push(buildElementLengthProfile(path, text, elementConstraint));
+    }
+
+    return profiles.sort((a, b) => a.path.localeCompare(b.path));
+  }, [
+    getFallbackContentWidthPx,
+    measureCharWidth,
+    parsePxValue,
+    resolveAvailableWidthPx,
+    resumeData,
+  ]);
+
   const handleExtractRequirements = useCallback(async () => {
     const jobDescription = formData.jobDescription.trim();
     if (!normalizeComparable(jobDescription)) {
@@ -498,8 +778,13 @@ export function AppLayout() {
     setRequirementsError(null);
     setRequirementsDebugPayload(null);
     setExtractedRequirementsPayload(null);
+    setAiEditError(null);
+    setRequirementResolutionById({});
+    setAiEditedPaths([]);
+    setHoveredRequirementPath(null);
 
     try {
+      const elementLengthProfiles = collectElementLengthProfiles();
       const response = await fetch("/api/extract-requirements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -514,7 +799,14 @@ export function AppLayout() {
           throw new Error("Requirement extraction failed. Invalid JSON.");
         }
       }
-      setRequirementsDebugPayload(payload);
+      setRequirementsDebugPayload({
+        request: {
+          jobDescriptionChars: jobDescription.length,
+          elementProfileCount: elementLengthProfiles.length,
+        },
+        elementLengthProfiles,
+        response: payload,
+      });
       if (!response.ok) {
         const baseError =
           typeof payload?.error === "string" && payload.error.trim()
@@ -539,11 +831,193 @@ export function AppLayout() {
     } finally {
       setIsExtractingRequirements(false);
     }
-  }, [formData.jobDescription]);
+  }, [collectElementLengthProfiles, formData.jobDescription]);
+
+  const handleAiEdit = useCallback(async () => {
+    const requirements = extractedRequirementsPayload?.requirements ?? [];
+    if (requirements.length === 0) {
+      setAiEditError("Extract requirements before running AI Edit.");
+      return;
+    }
+
+    setIsAiEditing(true);
+    setAiEditError(null);
+    setAiEditProgress({ completed: 0, total: requirements.length });
+    setHoveredRequirementPath(null);
+
+    try {
+      const elementLengthProfiles = collectElementLengthProfiles();
+      if (elementLengthProfiles.length === 0) {
+        throw new Error("Could not measure resume line constraints.");
+      }
+
+      const beforeSnapshot = structuredClone(resumeData);
+      const response = await fetch("/api/ai-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requirements,
+          resumeData,
+          elementProfiles: elementLengthProfiles,
+          stream: true,
+        }),
+      });
+      if (!response.ok) {
+        const rawText = await response.text();
+        let payload: AiEditResponse | null = null;
+        try {
+          payload = rawText ? (JSON.parse(rawText) as AiEditResponse) : null;
+        } catch {
+          payload = null;
+        }
+        throw new Error(payload?.error || "Failed to generate AI edits.");
+      }
+
+      const contentType = response.headers.get("content-type") ?? "";
+      let payload: AiEditResponse | null = null;
+      if (contentType.includes("text/event-stream")) {
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error("AI Edit stream is unavailable.");
+        }
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let separatorIndex = buffer.indexOf("\n\n");
+          while (separatorIndex >= 0) {
+            const block = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            separatorIndex = buffer.indexOf("\n\n");
+            if (!block.trim()) continue;
+
+            let event = "message";
+            const dataLines: string[] = [];
+            const lines = block.split("\n");
+            for (const line of lines) {
+              if (line.startsWith("event:")) {
+                event = line.slice("event:".length).trim();
+                continue;
+              }
+              if (line.startsWith("data:")) {
+                dataLines.push(line.slice("data:".length).trim());
+              }
+            }
+            const dataText = dataLines.join("\n");
+            if (!dataText) continue;
+            let eventPayload: any = null;
+            try {
+              eventPayload = JSON.parse(dataText);
+            } catch {
+              continue;
+            }
+
+            if (event === "progress") {
+              const completed = Number(eventPayload?.completed);
+              const total = Number(eventPayload?.total);
+              if (Number.isFinite(completed) && Number.isFinite(total) && total > 0) {
+                setAiEditProgress({
+                  completed: Math.max(0, Math.min(total, completed)),
+                  total,
+                });
+              }
+              continue;
+            }
+
+            if (event === "done") {
+              payload = eventPayload as AiEditResponse;
+              continue;
+            }
+
+            if (event === "error") {
+              throw new Error(
+                typeof eventPayload?.error === "string" && eventPayload.error.trim()
+                  ? eventPayload.error.trim()
+                  : "Failed to generate AI edits."
+              );
+            }
+          }
+        }
+      } else {
+        const rawText = await response.text();
+        try {
+          payload = rawText ? (JSON.parse(rawText) as AiEditResponse) : null;
+        } catch {
+          payload = null;
+        }
+      }
+
+      const operations = Array.isArray(payload?.operations)
+        ? payload.operations
+        : [];
+      const report = Array.isArray(payload?.report) ? payload.report : [];
+      const nextRequirementResolutionById: Record<
+        string,
+        RequirementResolutionState
+      > = {};
+      for (const entry of report) {
+        if (!entry?.requirementId) continue;
+        nextRequirementResolutionById[entry.requirementId] = {
+          requirementId: entry.requirementId,
+          mentioned: entry.mentioned,
+          status: entry.status,
+          resolvedPath: entry.editedPath ?? entry.matchedPath ?? null,
+          reason: entry.reason,
+        };
+      }
+      setRequirementResolutionById(nextRequirementResolutionById);
+      setAiEditProgress({
+        completed:
+          report.length > 0
+            ? Math.min(requirements.length, report.length)
+            : requirements.length,
+        total: requirements.length,
+      });
+      const nextEditedPaths = Array.from(
+        new Set(
+          operations
+            .filter((operation) => operation.op === "replace" && operation.path)
+            .map((operation) => operation.path)
+        )
+      );
+      setAiEditedPaths(nextEditedPaths);
+      if (operations.length === 0) {
+        setAiEditError("No feasible ATS-safe inline edits were found.");
+        return;
+      }
+
+      const nextResumeData = operations.reduce((current, operation) => {
+        if (operation.op !== "replace") return current;
+        if (!operation.path || typeof operation.value !== "string") return current;
+        return setResumeValueAtPath(current, operation.path, operation.value);
+      }, beforeSnapshot);
+
+      setResumeData(withResumeIntegrityGuardrails(nextResumeData));
+      setDiffBaseResume(beforeSnapshot);
+      setIsDiffViewOpen(true);
+      setMobileDiffSection("updated");
+      setActiveDocumentTab("resume");
+    } catch (error) {
+      console.error("Error running AI Edit:", error);
+      setAiEditError(
+        error instanceof Error ? error.message : "Failed to run AI Edit."
+      );
+    } finally {
+      setIsAiEditing(false);
+    }
+  }, [collectElementLengthProfiles, extractedRequirementsPayload, resumeData]);
 
   const handleImportResume = useCallback(async (file: File) => {
     setIsImportingResume(true);
     setImportError(null);
+    setAiEditError(null);
+    setAiEditProgress({ completed: 0, total: 0 });
+    setRequirementResolutionById({});
+    setAiEditedPaths([]);
+    setHoveredRequirementPath(null);
     try {
       const payload = new FormData();
       payload.append("file", file);
@@ -643,6 +1117,11 @@ export function AppLayout() {
   const handleResetResume = useCallback(() => {
     setResumeData(defaultResumeData);
     setResumeAnalysis(null);
+    setAiEditError(null);
+    setAiEditProgress({ completed: 0, total: 0 });
+    setRequirementResolutionById({});
+    setAiEditedPaths([]);
+    setHoveredRequirementPath(null);
     setIsDiffViewOpen(false);
     setDiffBaseResume(null);
     setActiveDocumentTab("resume");
@@ -677,9 +1156,33 @@ export function AppLayout() {
   }, []);
 
   const showDiffView = Boolean(isDiffViewOpen && diffBaseResume);
-  const extractedRequirements = extractedRequirementsPayload?.requirements ?? [];
+  const extractedRequirements = useMemo(
+    () => extractedRequirementsPayload?.requirements ?? [],
+    [extractedRequirementsPayload]
+  );
   const extractedRoleTitle = extractedRequirementsPayload?.roleTitle ?? "";
   const extractedRoleFamily = extractedRequirementsPayload?.roleFamily ?? null;
+  const requirementCoverage = useMemo(
+    () => ({
+      directlyMentioned: extractedRequirements.filter(
+        (requirement) =>
+          requirementResolutionById[requirement.id]?.mentioned === "yes"
+      ).length,
+      total: extractedRequirements.length,
+    }),
+    [extractedRequirements, requirementResolutionById]
+  );
+  const highlightedFieldPaths = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [hoveredRequirementPath, ...aiEditedPaths].filter(
+            (value): value is string => Boolean(value && value.trim())
+          )
+        )
+      ),
+    [hoveredRequirementPath, aiEditedPaths]
+  );
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-background pb-20 md:pb-0">
@@ -721,6 +1224,13 @@ export function AppLayout() {
                   extractedRoleFamily={extractedRoleFamily}
                   requirementsError={requirementsError}
                   requirementsDebugPayload={requirementsDebugPayload}
+                  onAiEdit={handleAiEdit}
+                  isAiEditing={isAiEditing}
+                  aiEditError={aiEditError}
+                  aiEditProgress={aiEditProgress}
+                  requirementResolutionById={requirementResolutionById}
+                  requirementCoverage={requirementCoverage}
+                  onRequirementHover={setHoveredRequirementPath}
                   isDiffViewOpen={showDiffView}
                   onToggleDiffView={handleToggleDiffView}
                   onResetResume={handleResetResume}
@@ -857,6 +1367,8 @@ export function AppLayout() {
                         documentTab={activeDocumentTab}
                         onDocumentTabChange={setActiveDocumentTab}
                         documentTabControl="none"
+                        highlightFieldPaths={highlightedFieldPaths}
+                        highlightTone="before"
                       />
                     </div>
                   </div>
@@ -878,6 +1390,8 @@ export function AppLayout() {
                         documentTab={activeDocumentTab}
                         onDocumentTabChange={setActiveDocumentTab}
                         documentTabControl="none"
+                        highlightFieldPaths={highlightedFieldPaths}
+                        highlightTone="after"
                         onToolbarActionsReady={(actions) => {
                           diffToolbarActionsRef.current = actions;
                         }}
@@ -898,6 +1412,8 @@ export function AppLayout() {
                 documentTab={activeDocumentTab}
                 onDocumentTabChange={setActiveDocumentTab}
                 documentTabControl="select"
+                highlightFieldPaths={highlightedFieldPaths}
+                highlightTone="after"
                 toolbarActionsSlot={
                   <>
                     <Button
@@ -932,6 +1448,8 @@ export function AppLayout() {
                 documentTab={activeDocumentTab}
                 onDocumentTabChange={setActiveDocumentTab}
                 documentTabControl="select"
+                highlightFieldPaths={highlightedFieldPaths}
+                highlightTone="after"
               />
             )}
           </div>
@@ -1030,6 +1548,13 @@ export function AppLayout() {
                 extractedRoleFamily={extractedRoleFamily}
                 requirementsError={requirementsError}
                 requirementsDebugPayload={requirementsDebugPayload}
+                onAiEdit={handleAiEdit}
+                isAiEditing={isAiEditing}
+                aiEditError={aiEditError}
+                aiEditProgress={aiEditProgress}
+                requirementResolutionById={requirementResolutionById}
+                requirementCoverage={requirementCoverage}
+                onRequirementHover={setHoveredRequirementPath}
                 isDiffViewOpen={showDiffView}
                 onToggleDiffView={handleToggleDiffView}
                 onResetResume={handleResetResume}
@@ -1111,6 +1636,10 @@ export function AppLayout() {
                     onDocumentTabChange={setActiveDocumentTab}
                     documentTabControl="select"
                     showToolbarActionsInReadOnly
+                    highlightFieldPaths={highlightedFieldPaths}
+                    highlightTone={
+                      mobileDiffSection === "original" ? "before" : "after"
+                    }
                   />
                 </div>
               </div>
@@ -1153,6 +1682,8 @@ export function AppLayout() {
                     documentTab={activeDocumentTab}
                     onDocumentTabChange={setActiveDocumentTab}
                     documentTabControl="select"
+                    highlightFieldPaths={highlightedFieldPaths}
+                    highlightTone="after"
                   />
                 </div>
               </div>
@@ -1167,6 +1698,8 @@ export function AppLayout() {
                 documentTab={activeDocumentTab}
                 onDocumentTabChange={setActiveDocumentTab}
                 documentTabControl="select"
+                highlightFieldPaths={highlightedFieldPaths}
+                highlightTone="after"
               />
             )}
           </div>

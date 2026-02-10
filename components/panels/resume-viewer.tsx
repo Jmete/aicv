@@ -33,6 +33,7 @@ import {
   setResumeValueAtPath,
 } from "@/lib/resume-analysis";
 import {
+  buildFieldLengthConstraint,
   estimateWrappedLineCount,
   getFontSafetyBuffer,
   type FieldLengthConstraint,
@@ -2038,22 +2039,9 @@ export function ResumeViewer({
       const constraints = new Map<string, FieldLengthConstraint>();
       for (const field of fields) {
         if (!field.metrics) continue;
-        const maxCharsPerLine = Math.max(
-          8,
-          Math.floor(
-            (field.metrics.availableWidthPx * field.metrics.safetyBuffer) /
-              field.metrics.charWidthPx
-          )
-        );
-        constraints.set(field.path, {
-          maxLines,
-          maxCharsPerLine,
-          maxCharsTotal: maxCharsPerLine * maxLines,
-          availableWidthPx: field.metrics.availableWidthPx,
-          fontSizePx: field.metrics.fontSizePx,
-          fontFamily: field.metrics.fontFamily,
-          safetyBuffer: field.metrics.safetyBuffer,
-        });
+        const constraint = buildFieldLengthConstraint(field.metrics, maxLines);
+        if (!constraint) continue;
+        constraints.set(field.path, constraint);
       }
       return constraints;
     },

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { generateObject } from "ai";
-import { AI_MODELS } from "@/lib/ai-models";
+import { AI_MODELS, getOpenAIProviderOptions } from "@/lib/ai-models";
 import {
   estimateWrappedLineCount,
   type FieldLengthConstraint,
@@ -104,6 +104,7 @@ export async function POST(request: Request) {
           .filter(Boolean)
           .join("\n\n"),
         schema: responseSchema,
+        providerOptions: getOpenAIProviderOptions("inlineRewrite"),
       });
 
       replacement = sanitize(result.object.replacement || "");
