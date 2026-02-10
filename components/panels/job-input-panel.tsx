@@ -292,7 +292,10 @@ export function JobInputPanel({
             {extractedRoleTitle || extractedRoleFamily ? (
               <div className="mt-2 rounded-md border border-border/50 bg-background/90 p-2 text-[10px]">
                 {extractedRoleTitle ? (
-                  <p className="truncate text-[11px] font-semibold text-foreground">
+                  <p
+                    className="truncate text-[11px] font-semibold text-foreground"
+                    title={extractedRoleTitle}
+                  >
                     {extractedRoleTitle}
                   </p>
                 ) : null}
@@ -349,7 +352,7 @@ export function JobInputPanel({
                     return (
                     <article
                       key={`${item.id}-${index}`}
-                      className="relative rounded-md border border-border/50 bg-background/90 p-2"
+                      className="relative rounded-md border border-border/50 bg-background/90 py-2 pl-6 pr-2"
                       onMouseEnter={() => onRequirementHover(resolvedPath)}
                       onMouseLeave={() => onRequirementHover(null)}
                     >
@@ -364,7 +367,10 @@ export function JobInputPanel({
                         }
                       />
                       <div className="flex items-start justify-between gap-2">
-                        <p className="truncate text-[11px] font-semibold text-foreground">
+                        <p
+                          className="truncate text-[11px] font-semibold text-foreground"
+                          title={item.canonical}
+                        >
                           {item.canonical}
                         </p>
                         <span className="rounded-sm border border-border/50 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
@@ -398,6 +404,7 @@ export function JobInputPanel({
                             <p
                               key={`${item.id}-evidence-${evidenceIndex}`}
                               className="truncate"
+                              title={evidence}
                             >
                               evidence: {evidence}
                             </p>

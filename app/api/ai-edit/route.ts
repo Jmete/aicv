@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { generateObject } from "ai";
+import { APICallError, RetryError, generateObject } from "ai";
 import { AI_MODELS, getOpenAIProviderOptions } from "@/lib/ai-models";
 import { estimateWrappedLineCount } from "@/lib/line-constraints";
 
@@ -11,6 +11,10 @@ export const runtime = "nodejs";
 const MAX_REQUIREMENTS = 24;
 const MAX_DECISION_ATTEMPTS = 3;
 const MAX_RESOLUTIONS_PER_ELEMENT = 2;
+const TEMPORARY_AI_SERVICE_ERROR =
+  "AI provider is temporarily unavailable. Please try AI Edit again.";
+const TEMPORARY_DECISION_REASON =
+  "Temporary AI service issue prevented evaluating this requirement.";
 
 const mentionSchema = z.enum(["yes", "implied", "none"]);
 
@@ -170,6 +174,44 @@ const sanitize = (value: string) =>
 const normalizeComparable = (value: string) =>
   value.replace(/\s+/g, " ").trim().toLowerCase();
 
+const hasTransientMessage = (value: string) => {
+  const normalized = value.toLowerCase();
+  return (
+    normalized.includes("bad gateway") ||
+    normalized.includes("gateway timeout") ||
+    normalized.includes("service unavailable") ||
+    normalized.includes("temporarily unavailable") ||
+    normalized.includes("timed out")
+  );
+};
+
+const isTransientAiError = (error: unknown): boolean => {
+  if (APICallError.isInstance(error)) {
+    if (error.isRetryable) return true;
+    if (typeof error.statusCode === "number" && error.statusCode >= 500) {
+      return true;
+    }
+    return hasTransientMessage(error.message);
+  }
+
+  if (RetryError.isInstance(error)) {
+    if (error.reason === "abort") return false;
+    if (error.errors.some((inner) => isTransientAiError(inner))) return true;
+    return hasTransientMessage(error.message);
+  }
+
+  if (error instanceof Error) {
+    return hasTransientMessage(error.message);
+  }
+
+  return false;
+};
+
+const getClientFacingAiEditError = (error: unknown) =>
+  isTransientAiError(error)
+    ? TEMPORARY_AI_SERVICE_ERROR
+    : "Failed to generate AI edits.";
+
 const isExperienceBulletPath = (path: string) =>
   /^experience\[\d+\]\.bullets\[\d+\]$/.test(path);
 
@@ -302,21 +344,36 @@ const decideRequirement = async (options: {
   let lastSuggestedEdit = "";
 
   for (let attempt = 1; attempt <= MAX_DECISION_ATTEMPTS; attempt += 1) {
-    const result = await generateObject({
-      model: AI_MODELS.aiEdit,
-      system: systemPrompt,
-      schema: aiDecisionSchema,
-      providerOptions: getOpenAIProviderOptions("aiEdit"),
-      prompt: [
-        basePrompt,
-        lastSuggestedEdit
-          ? `Previous suggested edit:\n${lastSuggestedEdit}`
-          : "",
-        repairGuidance,
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-    });
+    let result: { object: AiDecision };
+    try {
+      result = await generateObject({
+        model: AI_MODELS.aiEdit,
+        system: systemPrompt,
+        schema: aiDecisionSchema,
+        providerOptions: getOpenAIProviderOptions("aiEdit"),
+        prompt: [
+          basePrompt,
+          lastSuggestedEdit
+            ? `Previous suggested edit:\n${lastSuggestedEdit}`
+            : "",
+          repairGuidance,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      });
+    } catch (error) {
+      if (!isTransientAiError(error)) {
+        throw error;
+      }
+      if (attempt < MAX_DECISION_ATTEMPTS) {
+        continue;
+      }
+      return {
+        kind: "unresolved",
+        mentioned: "none",
+        reason: TEMPORARY_DECISION_REASON,
+      };
+    }
 
     const decision: AiDecision = {
       ...result.object,
@@ -456,6 +513,7 @@ const runAiEdit = async (
   const resolutionCountByPath = new Map<string, number>();
   const total = requirements.length;
   let completed = 0;
+  let transientDecisionFailures = 0;
 
   const operations: AiEditOperation[] = [];
   const report: AiEditReportEntry[] = [];
@@ -499,12 +557,35 @@ const runAiEdit = async (
       continue;
     }
 
-    const outcome = await decideRequirement({
-      requirement,
-      candidates: availableCandidates,
-      lockedNoEdit,
-      systemPrompt,
-    });
+    let outcome: DecisionOutcome;
+    try {
+      outcome = await decideRequirement({
+        requirement,
+        candidates: availableCandidates,
+        lockedNoEdit,
+        systemPrompt,
+      });
+    } catch (error) {
+      if (!isTransientAiError(error)) {
+        throw error;
+      }
+      transientDecisionFailures += 1;
+      await appendReport({
+        requirementId: requirement.id,
+        canonical: requirement.canonical,
+        status: lockedNoEdit ? "locked_no_edit" : "unresolved",
+        mentioned: "none",
+        reason: TEMPORARY_DECISION_REASON,
+      });
+      continue;
+    }
+
+    if (
+      outcome.kind === "unresolved" &&
+      outcome.reason === TEMPORARY_DECISION_REASON
+    ) {
+      transientDecisionFailures += 1;
+    }
 
     if (outcome.kind === "already") {
       resolutionCountByPath.set(
@@ -570,7 +651,13 @@ const runAiEdit = async (
     });
   }
 
-  return { operations, report };
+  return {
+    operations,
+    report,
+    ...(operations.length === 0 && transientDecisionFailures > 0
+      ? { error: TEMPORARY_AI_SERVICE_ERROR }
+      : {}),
+  };
 };
 
 export async function POST(request: Request) {
@@ -609,8 +696,7 @@ export async function POST(request: Request) {
             writeEvent("done", output);
             controller.close();
           } catch (error) {
-            const message =
-              error instanceof Error ? error.message : "Failed to generate AI edits.";
+            const message = getClientFacingAiEditError(error);
             writeEvent("error", { error: message });
             controller.close();
           }
@@ -628,8 +714,8 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Error generating AI ATS edits:", error);
     return NextResponse.json(
-      { error: "Failed to generate AI edits." },
-      { status: 500 }
+      { error: getClientFacingAiEditError(error) },
+      { status: isTransientAiError(error) ? 503 : 500 }
     );
   }
 }

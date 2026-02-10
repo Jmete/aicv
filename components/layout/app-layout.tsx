@@ -126,6 +126,8 @@ const initialFormData: ApplicationFormData = {
   jobUrl: "",
   jobDescription: "",
 };
+const TEMPORARY_AI_EDIT_ERROR =
+  "AI provider is temporarily unavailable. Please try AI Edit again.";
 
 const normalizeComparable = (value: string) =>
   value.replace(/\s+/g, " ").trim();
@@ -985,7 +987,22 @@ export function AppLayout() {
       );
       setAiEditedPaths(nextEditedPaths);
       if (operations.length === 0) {
-        setAiEditError("No feasible ATS-safe inline edits were found.");
+        const payloadError =
+          typeof payload?.error === "string" ? payload.error.trim() : "";
+        if (payloadError) {
+          setAiEditError(payloadError);
+          return;
+        }
+        const hasTemporaryServiceIssue = report.some((entry) =>
+          typeof entry?.reason === "string"
+            ? entry.reason.toLowerCase().includes("temporary ai service issue")
+            : false
+        );
+        setAiEditError(
+          hasTemporaryServiceIssue
+            ? TEMPORARY_AI_EDIT_ERROR
+            : "No feasible ATS-safe inline edits were found."
+        );
         return;
       }
 
