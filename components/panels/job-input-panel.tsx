@@ -49,7 +49,12 @@ interface JobInputPanelProps {
     directlyMentioned: number;
     total: number;
   };
-  onRequirementHover: (path: string | null) => void;
+  onRequirementHover: (
+    payload: {
+      path: string | null;
+      mentioned: RequirementResolutionState["mentioned"] | null;
+    } | null
+  ) => void;
   isDiffViewOpen: boolean;
   onToggleDiffView: () => void;
   onResetResume: () => void;
@@ -353,7 +358,12 @@ export function JobInputPanel({
                     <article
                       key={`${item.id}-${index}`}
                       className="relative rounded-md border border-border/50 bg-background/90 py-2 pl-6 pr-2"
-                      onMouseEnter={() => onRequirementHover(resolvedPath)}
+                      onMouseEnter={() =>
+                        onRequirementHover({
+                          path: resolvedPath,
+                          mentioned: mentionState,
+                        })
+                      }
                       onMouseLeave={() => onRequirementHover(null)}
                     >
                       <span

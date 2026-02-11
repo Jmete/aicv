@@ -122,6 +122,11 @@ export interface RequirementResolutionState {
   reason?: string;
 }
 
+type HoveredRequirementState = {
+  path: string | null;
+  mentioned: RequirementResolutionState["mentioned"] | null;
+};
+
 const initialFormData: ApplicationFormData = {
   jobUrl: "",
   jobDescription: "",
@@ -350,9 +355,8 @@ export function AppLayout() {
     Record<string, RequirementResolutionState>
   >({});
   const [aiEditedPaths, setAiEditedPaths] = useState<string[]>([]);
-  const [hoveredRequirementPath, setHoveredRequirementPath] = useState<string | null>(
-    null
-  );
+  const [hoveredRequirement, setHoveredRequirement] =
+    useState<HoveredRequirementState | null>(null);
   const [resumeProfilesData, setResumeProfilesData] =
     useState<ResumeProfilesData>(normalizeResumeProfilesData(DEFAULT_RESUME_DATA));
   const [defaultResumeData, setDefaultResumeData] =
@@ -406,7 +410,7 @@ export function AppLayout() {
     setAiEditProgress({ completed: 0, total: 0 });
     setRequirementResolutionById({});
     setAiEditedPaths([]);
-    setHoveredRequirementPath(null);
+    setHoveredRequirement(null);
     setResumeData(defaultResumeData);
     setResumeAnalysis(null);
     setImportError(null);
@@ -442,7 +446,7 @@ export function AppLayout() {
         setRequirementsDebugPayload(null);
         setRequirementResolutionById({});
         setAiEditedPaths([]);
-        setHoveredRequirementPath(null);
+        setHoveredRequirement(null);
       }
       setFormData(data);
       setExtractError(null);
@@ -492,7 +496,7 @@ export function AppLayout() {
       setAiEditProgress({ completed: 0, total: 0 });
       setRequirementResolutionById({});
       setAiEditedPaths([]);
-      setHoveredRequirementPath(null);
+      setHoveredRequirement(null);
       setIsDiffViewOpen(false);
       setDiffBaseResume(null);
 
@@ -584,7 +588,7 @@ export function AppLayout() {
       setRequirementsDebugPayload(null);
       setRequirementResolutionById({});
       setAiEditedPaths([]);
-      setHoveredRequirementPath(null);
+      setHoveredRequirement(null);
     } catch (error) {
       console.error("Error extracting job description:", error);
       setExtractError(
@@ -783,7 +787,7 @@ export function AppLayout() {
     setAiEditError(null);
     setRequirementResolutionById({});
     setAiEditedPaths([]);
-    setHoveredRequirementPath(null);
+    setHoveredRequirement(null);
 
     try {
       const elementLengthProfiles = collectElementLengthProfiles();
@@ -845,7 +849,7 @@ export function AppLayout() {
     setIsAiEditing(true);
     setAiEditError(null);
     setAiEditProgress({ completed: 0, total: requirements.length });
-    setHoveredRequirementPath(null);
+    setHoveredRequirement(null);
 
     try {
       const elementLengthProfiles = collectElementLengthProfiles();
@@ -1034,7 +1038,7 @@ export function AppLayout() {
     setAiEditProgress({ completed: 0, total: 0 });
     setRequirementResolutionById({});
     setAiEditedPaths([]);
-    setHoveredRequirementPath(null);
+    setHoveredRequirement(null);
     try {
       const payload = new FormData();
       payload.append("file", file);
@@ -1138,7 +1142,7 @@ export function AppLayout() {
     setAiEditProgress({ completed: 0, total: 0 });
     setRequirementResolutionById({});
     setAiEditedPaths([]);
-    setHoveredRequirementPath(null);
+    setHoveredRequirement(null);
     setIsDiffViewOpen(false);
     setDiffBaseResume(null);
     setActiveDocumentTab("resume");
@@ -1193,12 +1197,28 @@ export function AppLayout() {
     () =>
       Array.from(
         new Set(
-          [hoveredRequirementPath, ...aiEditedPaths].filter(
+          [
+            ...aiEditedPaths,
+            hoveredRequirement?.mentioned === "implied"
+              ? null
+              : hoveredRequirement?.path ?? null,
+          ].filter(
             (value): value is string => Boolean(value && value.trim())
           )
         )
       ),
-    [hoveredRequirementPath, aiEditedPaths]
+    [aiEditedPaths, hoveredRequirement]
+  );
+  const impliedHighlightedFieldPaths = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [hoveredRequirement?.mentioned === "implied" ? hoveredRequirement?.path : null].filter(
+            (value): value is string => Boolean(value && value.trim())
+          )
+        )
+      ),
+    [hoveredRequirement]
   );
 
   return (
@@ -1247,7 +1267,13 @@ export function AppLayout() {
                   aiEditProgress={aiEditProgress}
                   requirementResolutionById={requirementResolutionById}
                   requirementCoverage={requirementCoverage}
-                  onRequirementHover={setHoveredRequirementPath}
+                  onRequirementHover={(payload) => {
+                    if (!payload?.path || !payload.path.trim()) {
+                      setHoveredRequirement(null);
+                      return;
+                    }
+                    setHoveredRequirement(payload);
+                  }}
                   isDiffViewOpen={showDiffView}
                   onToggleDiffView={handleToggleDiffView}
                   onResetResume={handleResetResume}
@@ -1385,6 +1411,7 @@ export function AppLayout() {
                         onDocumentTabChange={setActiveDocumentTab}
                         documentTabControl="none"
                         highlightFieldPaths={highlightedFieldPaths}
+                        impliedHighlightFieldPaths={impliedHighlightedFieldPaths}
                         highlightTone="before"
                       />
                     </div>
@@ -1408,6 +1435,7 @@ export function AppLayout() {
                         onDocumentTabChange={setActiveDocumentTab}
                         documentTabControl="none"
                         highlightFieldPaths={highlightedFieldPaths}
+                        impliedHighlightFieldPaths={impliedHighlightedFieldPaths}
                         highlightTone="after"
                         onToolbarActionsReady={(actions) => {
                           diffToolbarActionsRef.current = actions;
@@ -1430,6 +1458,7 @@ export function AppLayout() {
                 onDocumentTabChange={setActiveDocumentTab}
                 documentTabControl="select"
                 highlightFieldPaths={highlightedFieldPaths}
+                impliedHighlightFieldPaths={impliedHighlightedFieldPaths}
                 highlightTone="after"
                 toolbarActionsSlot={
                   <>
@@ -1466,6 +1495,7 @@ export function AppLayout() {
                 onDocumentTabChange={setActiveDocumentTab}
                 documentTabControl="select"
                 highlightFieldPaths={highlightedFieldPaths}
+                impliedHighlightFieldPaths={impliedHighlightedFieldPaths}
                 highlightTone="after"
               />
             )}
@@ -1571,7 +1601,13 @@ export function AppLayout() {
                 aiEditProgress={aiEditProgress}
                 requirementResolutionById={requirementResolutionById}
                 requirementCoverage={requirementCoverage}
-                onRequirementHover={setHoveredRequirementPath}
+                onRequirementHover={(payload) => {
+                  if (!payload?.path || !payload.path.trim()) {
+                    setHoveredRequirement(null);
+                    return;
+                  }
+                  setHoveredRequirement(payload);
+                }}
                 isDiffViewOpen={showDiffView}
                 onToggleDiffView={handleToggleDiffView}
                 onResetResume={handleResetResume}
@@ -1654,6 +1690,7 @@ export function AppLayout() {
                     documentTabControl="select"
                     showToolbarActionsInReadOnly
                     highlightFieldPaths={highlightedFieldPaths}
+                    impliedHighlightFieldPaths={impliedHighlightedFieldPaths}
                     highlightTone={
                       mobileDiffSection === "original" ? "before" : "after"
                     }
@@ -1700,6 +1737,7 @@ export function AppLayout() {
                     onDocumentTabChange={setActiveDocumentTab}
                     documentTabControl="select"
                     highlightFieldPaths={highlightedFieldPaths}
+                    impliedHighlightFieldPaths={impliedHighlightedFieldPaths}
                     highlightTone="after"
                   />
                 </div>
@@ -1716,6 +1754,7 @@ export function AppLayout() {
                 onDocumentTabChange={setActiveDocumentTab}
                 documentTabControl="select"
                 highlightFieldPaths={highlightedFieldPaths}
+                impliedHighlightFieldPaths={impliedHighlightedFieldPaths}
                 highlightTone="after"
               />
             )}

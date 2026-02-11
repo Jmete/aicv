@@ -12,7 +12,7 @@ export const AI_EDIT_MODEL_ID = QUICK_EDIT_MODEL_ID;
 
 // Resume file import + structured extraction.
 export const RESUME_IMPORT_MODEL_ID = "gpt-5-nano";
-export const REQUIREMENT_EXTRACTION_MODEL_ID = "gpt-5-nano";
+export const REQUIREMENT_EXTRACTION_MODEL_ID = "gpt-5-mini";
 
 export type OpenAIReasoningEffort = "minimal" | "low" | "medium" | "high";
 export type OpenAITextVerbosity = "low" | "medium" | "high";

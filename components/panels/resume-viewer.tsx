@@ -152,6 +152,7 @@ interface ResumeViewerProps {
     isExportingPdf: boolean;
   }) => void;
   highlightFieldPaths?: string[];
+  impliedHighlightFieldPaths?: string[];
   highlightTone?: "before" | "after";
 }
 
@@ -174,6 +175,7 @@ type HyperlinkContextValue = {
   isPrintPreviewMode: boolean;
   isReadOnly: boolean;
   highlightPaths: Set<string>;
+  impliedHighlightPaths: Set<string>;
   highlightTone: "before" | "after";
   hyperlinksByPath: Map<string, TextHyperlink[]>;
   hyperlinkUnderlineEnabled: boolean;
@@ -183,6 +185,7 @@ const HyperlinkContext = createContext<HyperlinkContextValue>({
   isPrintPreviewMode: false,
   isReadOnly: false,
   highlightPaths: new Set(),
+  impliedHighlightPaths: new Set(),
   highlightTone: "after",
   hyperlinksByPath: new Map(),
   hyperlinkUnderlineEnabled: true,
@@ -265,6 +268,7 @@ function EditableText({
     isPrintPreviewMode,
     isReadOnly,
     highlightPaths,
+    impliedHighlightPaths,
     highlightTone,
     hyperlinksByPath,
     hyperlinkUnderlineEnabled,
@@ -277,15 +281,21 @@ function EditableText({
     if (!fieldPath) return [] as TextHyperlink[];
     return hyperlinksByPath.get(fieldPath) ?? [];
   }, [fieldPath, hyperlinksByPath]);
-  const isHighlighted = useMemo(
+  const isPrimaryHighlighted = useMemo(
     () => isFieldPathHighlighted(fieldPath, highlightPaths),
     [fieldPath, highlightPaths]
   );
-  const highlightClass = isHighlighted
-    ? highlightTone === "before"
+  const isImpliedHighlighted = useMemo(
+    () => isFieldPathHighlighted(fieldPath, impliedHighlightPaths),
+    [fieldPath, impliedHighlightPaths]
+  );
+  const highlightClass = isImpliedHighlighted
+    ? "rounded-[2px] bg-amber-200/45 ring-1 ring-amber-400/70 dark:bg-amber-500/20 dark:ring-amber-400/50"
+    : isPrimaryHighlighted
+      ? highlightTone === "before"
       ? "rounded-[2px] bg-amber-200/45 ring-1 ring-amber-400/70 dark:bg-amber-500/20 dark:ring-amber-400/50"
       : "rounded-[2px] bg-emerald-200/45 ring-1 ring-emerald-400/70 dark:bg-emerald-500/20 dark:ring-emerald-400/50"
-    : "";
+      : "";
 
   const linkedSegments = useMemo(() => {
     if (fieldHyperlinks.length === 0) {
@@ -833,6 +843,7 @@ export function ResumeViewer({
   onToolbarActionsReady,
   onToolbarStateChange,
   highlightFieldPaths,
+  impliedHighlightFieldPaths,
   highlightTone = "after",
 }: ResumeViewerProps) {
   const {
@@ -858,6 +869,10 @@ export function ResumeViewer({
   const highlightPathSet = useMemo(
     () => new Set((highlightFieldPaths ?? []).filter(Boolean)),
     [highlightFieldPaths]
+  );
+  const impliedHighlightPathSet = useMemo(
+    () => new Set((impliedHighlightFieldPaths ?? []).filter(Boolean)),
+    [impliedHighlightFieldPaths]
   );
 
   const canShowCoverLetterTab = !readOnly || allowCoverLetterTabInReadOnly;
@@ -4302,6 +4317,7 @@ export function ResumeViewer({
         isPrintPreviewMode,
         isReadOnly: readOnly,
         highlightPaths: highlightPathSet,
+        impliedHighlightPaths: impliedHighlightPathSet,
         highlightTone,
         hyperlinksByPath,
         hyperlinkUnderlineEnabled: resolvedLayoutPreferences.hyperlinkUnderline,
