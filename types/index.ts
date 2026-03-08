@@ -11,6 +11,8 @@ export interface Application {
   id: number;
   companyName: string;
   jobTitle: string;
+  variationTitle: string | null;
+  variationId: string | null;
   jobUrl: string | null;
   jobDescription: string;
   status: "draft" | "applied" | "interviewing" | "offered" | "rejected";

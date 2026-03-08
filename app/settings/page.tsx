@@ -11,6 +11,7 @@ import {
   Palette,
   RefreshCw,
   Trash2,
+  User,
   UserPlus,
 } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -18,6 +19,7 @@ import { ResumeViewer } from "@/components/panels/resume-viewer";
 import { ResumeEditorPanel } from "@/components/resume-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -27,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { createId } from "@/lib/id";
 import {
   applySelectedProfileResumeUpdate,
@@ -84,6 +87,12 @@ const settingsOptions = [
     icon: Palette,
   },
   {
+    id: "about-me",
+    label: "About Me",
+    description: "Add context the AI can use for edits and cover letters.",
+    icon: User,
+  },
+  {
     id: "notifications",
     label: "Notifications",
     description: "Control alerts and status updates.",
@@ -126,6 +135,16 @@ export default function SettingsPage() {
 
   const handleResumeUpdate = useCallback((data: ResumeData) => {
     setProfilesData((current) => applySelectedProfileResumeUpdate(current, data));
+  }, []);
+
+  const handleAboutMeChange = useCallback((aboutMe: string) => {
+    setProfilesData((current) => {
+      const selected = getSelectedProfile(current);
+      return applySelectedProfileResumeUpdate(current, {
+        ...selected.resumeData,
+        aboutMe,
+      });
+    });
   }, []);
 
   const handleImportResume = useCallback(async (file: File) => {
@@ -494,8 +513,39 @@ export default function SettingsPage() {
     </ScrollArea>
   );
 
+  const aboutMePanel = (
+    <ScrollArea className="flex-1">
+      <div className="p-4 md:p-8">
+        <div className="mx-auto w-full max-w-2xl rounded-lg border border-border bg-card p-5">
+          <h2 className="text-sm font-medium text-foreground">About Me</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Add truthful context that may not appear on your resume. AI Edit may
+            use this when proposing resume changes and drafting a concise
+            one-page cover letter.
+          </p>
+          <div className="mt-4 space-y-2">
+            <Label htmlFor="about-me" className="text-xs text-muted-foreground">
+              Additional context for AI
+            </Label>
+            <Textarea
+              id="about-me"
+              value={resumeData.aboutMe ?? ""}
+              onChange={(event) => handleAboutMeChange(event.target.value)}
+              placeholder={
+                "Example: industries served, leadership scope, awards, domain depth, availability, and other facts not listed in the resume."
+              }
+              className="min-h-[220px] resize-y"
+            />
+          </div>
+        </div>
+      </div>
+    </ScrollArea>
+  );
+
   const shouldShowSaveStatus =
-    activeOption === "default-resume" || activeOption === "sync-settings";
+    activeOption === "default-resume" ||
+    activeOption === "sync-settings" ||
+    activeOption === "about-me";
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-background pb-20 md:pb-0">
@@ -687,6 +737,8 @@ export default function SettingsPage() {
             </>
           ) : activeOption === "sync-settings" ? (
             <div className="flex flex-1 flex-col overflow-hidden">{syncSettingsPanel}</div>
+          ) : activeOption === "about-me" ? (
+            <div className="flex flex-1 flex-col overflow-hidden">{aboutMePanel}</div>
           ) : (
             <div className="flex flex-1 items-center justify-center p-8">
               <div className="max-w-md rounded-lg border border-border bg-card p-6">
@@ -753,6 +805,8 @@ export default function SettingsPage() {
             </>
           ) : activeOption === "sync-settings" ? (
             syncSettingsPanel
+          ) : activeOption === "about-me" ? (
+            aboutMePanel
           ) : (
             <ScrollArea className="flex-1">
               <div className="p-4">

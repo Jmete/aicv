@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Briefcase, Calendar, Building2 } from "lucide-react";
+import { ArrowLeft, Briefcase, Calendar, Building2, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,6 +14,8 @@ interface Application {
   id: number;
   companyName: string;
   jobTitle: string;
+  variationTitle: string | null;
+  variationId: string | null;
   jobUrl: string | null;
   jobDescription: string;
   resumeContent: string | null;
@@ -58,6 +60,8 @@ export default function ApplicationsPage() {
     if (!normalizedQuery) return true;
     return (
       (app.companyName || "").toLowerCase().includes(normalizedQuery) ||
+      (app.variationTitle || "").toLowerCase().includes(normalizedQuery) ||
+      (app.variationId || "").toLowerCase().includes(normalizedQuery) ||
       (app.jobTitle || "").toLowerCase().includes(normalizedQuery) ||
       (app.jobDescription || "").toLowerCase().includes(normalizedQuery)
     );
@@ -102,7 +106,7 @@ export default function ApplicationsPage() {
                 <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search by company, title, or job description..."
+                  placeholder="Search by variation title, company, ID, or job text..."
                   className="w-full max-w-md"
                 />
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -111,7 +115,7 @@ export default function ApplicationsPage() {
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between">
                         <CardTitle className="text-base font-medium">
-                          {app.jobTitle}
+                          {app.variationTitle?.trim() || app.jobTitle}
                         </CardTitle>
                         <span
                           className={cn(
@@ -129,6 +133,16 @@ export default function ApplicationsPage() {
                           <Building2 className="h-4 w-4" />
                           <span>{app.companyName}</span>
                         </div>
+                        {app.variationId ? (
+                          <p className="font-mono text-[11px] text-muted-foreground">
+                            #{app.variationId.slice(0, 8)}
+                          </p>
+                        ) : null}
+                        {app.jobTitle && app.variationTitle && app.jobTitle !== app.variationTitle ? (
+                          <p className="text-xs text-muted-foreground">
+                            Role: {app.jobTitle}
+                          </p>
+                        ) : null}
                         <div className="flex items-center gap-2">
                           <Calendar className="h-4 w-4" />
                           <span>
@@ -140,6 +154,23 @@ export default function ApplicationsPage() {
                             Optimized resume/cover letter saved
                           </p>
                         )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-2 h-7 w-full text-xs"
+                          asChild
+                        >
+                          <Link
+                            href={
+                              app.variationId
+                                ? `/?variationId=${encodeURIComponent(app.variationId)}`
+                                : `/?applicationId=${app.id}`
+                            }
+                          >
+                            <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                            Open in Editor
+                          </Link>
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>

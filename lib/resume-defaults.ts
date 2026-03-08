@@ -1,3 +1,5 @@
+import { DEFAULT_FONT_FAMILY, type FontFamily } from "@/lib/font-options";
+
 export type PaperSize = "a4" | "letter";
 export type ContactFieldKey =
   | "email"
@@ -20,6 +22,13 @@ export interface PageMargins {
 }
 
 export type MarginPreset = "narrow" | "normal" | "moderate";
+export interface LayoutSpacing {
+  nameGap: number;
+  contactGap: number;
+  bulletGap: number;
+  entryGap: number;
+  sectionGap: number;
+}
 
 export const MARGIN_PRESETS: Record<MarginPreset, PageMargins> = {
   narrow: { top: 12.7, right: 12.7, bottom: 12.7, left: 12.7 },
@@ -28,6 +37,11 @@ export const MARGIN_PRESETS: Record<MarginPreset, PageMargins> = {
 };
 
 export const DEFAULT_MARGINS: PageMargins = MARGIN_PRESETS.moderate;
+export const MIN_LAYOUT_SPACING = 0;
+export const MAX_LAYOUT_SPACING = 24;
+
+export const clampLayoutSpacing = (value: number) =>
+  Math.min(MAX_LAYOUT_SPACING, Math.max(MIN_LAYOUT_SPACING, value));
 
 export const DEFAULT_PAGE_SETTINGS = {
   paperSize: "letter" as PaperSize,
@@ -64,7 +78,7 @@ export const DEFAULT_CONTACT_ORDER: ContactFieldKey[] = [
 ];
 
 export const DEFAULT_FONT_PREFERENCES = {
-  family: "serif",
+  family: DEFAULT_FONT_FAMILY,
   sizes: {
     name: 24,
     subtitle: 12,
@@ -84,6 +98,14 @@ export const DEFAULT_COVER_LETTER_FONT_PREFERENCES = {
   },
 } as const;
 
+export const DEFAULT_LAYOUT_SPACING: LayoutSpacing = {
+  nameGap: 2,
+  contactGap: 4,
+  bulletGap: 2,
+  entryGap: 6,
+  sectionGap: 8,
+};
+
 export const DEFAULT_LAYOUT_PREFERENCES: {
   experienceOrder: "title-first" | "company-first";
   educationOrder: "degree-first" | "institution-first";
@@ -95,7 +117,7 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
     contact: "left" | "center" | "right";
   };
   fontPreferences: {
-    family: "serif" | "sans" | "mono";
+    family: FontFamily;
     sizes: {
       name: number;
       subtitle: number;
@@ -108,7 +130,7 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
     };
   };
   coverLetterFontPreferences: {
-    family: "serif" | "sans" | "mono";
+    family: FontFamily;
     sizes: {
       name: number;
       subtitle: number;
@@ -120,6 +142,7 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
       body: number;
     };
   };
+  spacing: LayoutSpacing;
   hyperlinkUnderline: boolean;
 } = {
   experienceOrder: "title-first",
@@ -129,6 +152,7 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
   headerAlignment: DEFAULT_HEADER_ALIGNMENT,
   fontPreferences: DEFAULT_FONT_PREFERENCES,
   coverLetterFontPreferences: DEFAULT_COVER_LETTER_FONT_PREFERENCES,
+  spacing: DEFAULT_LAYOUT_SPACING,
   hyperlinkUnderline: true,
 };
 
@@ -157,6 +181,7 @@ export const DEFAULT_RESUME_DATA = {
   },
   sectionVisibility: DEFAULT_SECTION_VISIBILITY,
   layoutPreferences: DEFAULT_LAYOUT_PREFERENCES,
+  aboutMe: "",
   coverLetter: DEFAULT_COVER_LETTER,
   experience: [],
   projects: [],

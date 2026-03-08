@@ -18,6 +18,8 @@ export const applications = sqliteTable("applications", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   companyName: text("company_name").notNull(),
   jobTitle: text("job_title").notNull(),
+  variationTitle: text("variation_title"),
+  variationId: text("variation_id"),
   jobUrl: text("job_url"),
   jobDescription: text("job_description").notNull(),
   status: text("status", {

@@ -63,7 +63,8 @@ export function assignElementsToPages(
   measurements: ElementMeasurement[],
   contentHeightPx: number,
   elementGap: number = 0,
-  headerElementGap: number = elementGap
+  headerElementGap: number = elementGap,
+  contentToHeaderGap: number = elementGap
 ): PageAssignment[] {
   if (measurements.length === 0) {
     return [{ pageIndex: 0, elements: [] }];
@@ -82,7 +83,9 @@ export function assignElementsToPages(
     const previousElement = currentPage.elements[currentPage.elements.length - 1];
     const gapHeight =
       currentPage.elements.length > 0
-        ? previousElement?.isHeader
+        ? element.isHeader
+          ? contentToHeaderGap
+          : previousElement?.isHeader
           ? headerElementGap
           : elementGap
         : 0;

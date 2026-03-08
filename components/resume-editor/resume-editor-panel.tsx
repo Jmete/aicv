@@ -3,6 +3,7 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { normalizeFontFamily } from "@/lib/font-options";
 import { DEFAULT_LAYOUT_PREFERENCES } from "@/lib/resume-defaults";
 import type { ResumeData } from "@/types";
 import { CoverLetterEditor } from "./cover-letter-editor";
@@ -17,6 +18,7 @@ import { ResumeImportPanel } from "./resume-import";
 import { SectionVisibility } from "./section-visibility";
 import { SectionAiHeader } from "./section-ai-header";
 import { SkillsEditor } from "./skills-editor";
+import { SpacingSettings } from "./spacing-settings";
 
 interface ResumeEditorPanelProps {
   resumeData: ResumeData;
@@ -49,6 +51,10 @@ export function ResumeEditorPanel({
     fontPreferences: {
       ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences,
       ...resumeData.layoutPreferences?.fontPreferences,
+      family: normalizeFontFamily(
+        resumeData.layoutPreferences?.fontPreferences?.family,
+        DEFAULT_LAYOUT_PREFERENCES.fontPreferences.family
+      ),
       sizes: {
         ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences.sizes,
         ...resumeData.layoutPreferences?.fontPreferences?.sizes,
@@ -57,10 +63,18 @@ export function ResumeEditorPanel({
     coverLetterFontPreferences: {
       ...DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences,
       ...resumeData.layoutPreferences?.coverLetterFontPreferences,
+      family: normalizeFontFamily(
+        resumeData.layoutPreferences?.coverLetterFontPreferences?.family,
+        DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences.family
+      ),
       sizes: {
         ...DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences.sizes,
         ...resumeData.layoutPreferences?.coverLetterFontPreferences?.sizes,
       },
+    },
+    spacing: {
+      ...DEFAULT_LAYOUT_PREFERENCES.spacing,
+      ...resumeData.layoutPreferences?.spacing,
     },
   };
 
@@ -195,6 +209,18 @@ export function ResumeEditorPanel({
                     layoutPreferences: {
                       ...layoutPreferences,
                       coverLetterFontPreferences,
+                    },
+                  })
+                }
+              />
+              <SpacingSettings
+                spacing={layoutPreferences.spacing}
+                onChange={(spacing) =>
+                  onResumeUpdate({
+                    ...resumeData,
+                    layoutPreferences: {
+                      ...layoutPreferences,
+                      spacing,
                     },
                   })
                 }

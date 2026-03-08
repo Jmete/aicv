@@ -4,9 +4,16 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  FONT_OPTION_GROUPS,
+  getFontOption,
+  normalizeFontFamily,
+} from "@/lib/font-options";
+import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -30,12 +37,6 @@ const FONT_SIZE_FIELDS = [
   { key: "itemMeta", label: "Dates & Meta" },
   { key: "body", label: "Body" },
 ] as const;
-
-const FONT_FAMILY_LABELS = {
-  serif: "Serif (Classic)",
-  sans: "Sans (Modern)",
-  mono: "Mono (Technical)",
-} as const;
 
 const FONT_TARGETS = [
   { key: "resume", label: "Resume" },
@@ -65,6 +66,7 @@ export function FontSettings({
   const [activeTarget, setActiveTarget] = useState<FontTarget>("resume");
   const activePreferences =
     activeTarget === "resume" ? resumePreferences : coverLetterPreferences;
+  const activeFontFamily = normalizeFontFamily(activePreferences.family);
   const activeFields =
     activeTarget === "resume" ? FONT_SIZE_FIELDS : COVER_LETTER_FONT_FIELDS;
 
@@ -136,18 +138,27 @@ export function FontSettings({
         <Label className="text-[11px] text-muted-foreground">
           Font Family
         </Label>
-        <Select
-          value={activePreferences.family}
-          onValueChange={handleFontFamilyChange}
-        >
+        <Select value={activeFontFamily} onValueChange={handleFontFamilyChange}>
           <SelectTrigger className="h-8 text-xs">
-            <SelectValue />
+            <SelectValue placeholder={getFontOption(activeFontFamily).label} />
           </SelectTrigger>
           <SelectContent>
-            {Object.entries(FONT_FAMILY_LABELS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
+            {FONT_OPTION_GROUPS.map((group) => (
+              <SelectGroup key={group.category}>
+                <SelectLabel className="px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  {group.label}
+                </SelectLabel>
+                {group.options.map((option) => (
+                  <SelectItem
+                    key={option.value}
+                    value={option.value}
+                    className="text-xs"
+                    style={{ fontFamily: option.stack }}
+                  >
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             ))}
           </SelectContent>
         </Select>

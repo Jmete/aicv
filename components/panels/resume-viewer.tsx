@@ -22,9 +22,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { getFontStack, normalizeFontFamily } from "@/lib/font-options";
 import {
+  clampLayoutSpacing,
   DEFAULT_LAYOUT_PREFERENCES,
   DEFAULT_PAGE_SETTINGS,
+  DEFAULT_RESUME_DATA,
   PAPER_DIMENSIONS,
 } from "@/lib/resume-defaults";
 import {
@@ -42,7 +45,6 @@ import { createId } from "@/lib/id";
 import { cn } from "@/lib/utils";
 import type {
   ContactFieldKey,
-  FontFamily,
   HeaderAlignment,
   ResumeData,
   ResumeAnalysisState,
@@ -108,12 +110,6 @@ const CONTACT_FIELDS = [
   },
 ] as const;
 
-const FONT_FAMILY_MAP: Record<FontFamily, string> = {
-  serif: "Georgia, 'Times New Roman', serif",
-  sans: "var(--font-geist-sans), system-ui, sans-serif",
-  mono: "var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-};
-
 interface ResumeViewerProps {
   resumeData: ResumeData;
   onResumeUpdate: (data: ResumeData) => void;
@@ -171,6 +167,433 @@ const normalizeText = (value: string, multiline: boolean) => {
   return multiline ? normalized : normalized.replace(/\n+/g, " ");
 };
 
+type UnknownRecord = Record<string, unknown>;
+
+const asRecord = (value: unknown): UnknownRecord | null => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as UnknownRecord;
+};
+
+const asString = (value: unknown, fallback = "") =>
+  typeof value === "string" ? value : fallback;
+
+const asNumber = (value: unknown, fallback: number) =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+const asBoolean = (value: unknown, fallback: boolean) =>
+  typeof value === "boolean" ? value : fallback;
+
+const asStringArray = (value: unknown, fallback: string[]) =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : fallback;
+
+const asOneOf = <T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  fallback: T
+) =>
+  typeof value === "string" && allowed.includes(value as T)
+    ? (value as T)
+    : fallback;
+
+const withFallbackMargins = (
+  value: unknown,
+  fallback: ResumeData["pageSettings"]["resumeMargins"]
+) => {
+  const objectValue = asRecord(value);
+  if (!objectValue) return fallback;
+  return {
+    top: asNumber(objectValue.top, fallback.top),
+    right: asNumber(objectValue.right, fallback.right),
+    bottom: asNumber(objectValue.bottom, fallback.bottom),
+    left: asNumber(objectValue.left, fallback.left),
+  };
+};
+
+const normalizeResumeFromDebugInput = (
+  value: unknown,
+  fallback: ResumeData
+): ResumeData | null => {
+  const root = asRecord(value);
+  if (!root) return null;
+  const input = asRecord(root.resumeData) ?? root;
+
+  const pageSettings = asRecord(input.pageSettings);
+  const metadata = asRecord(input.metadata);
+  const sectionVisibility = asRecord(input.sectionVisibility);
+  const layoutPreferences = asRecord(input.layoutPreferences);
+  const contactInfo = asRecord(metadata?.contactInfo);
+  const headerAlignment = asRecord(layoutPreferences?.headerAlignment);
+  const fontPreferences = asRecord(layoutPreferences?.fontPreferences);
+  const coverLetterFontPreferences = asRecord(
+    layoutPreferences?.coverLetterFontPreferences
+  );
+  const spacing = asRecord(layoutPreferences?.spacing);
+  const fontSizes = asRecord(fontPreferences?.sizes);
+  const coverLetterFontSizes = asRecord(coverLetterFontPreferences?.sizes);
+  const coverLetter = asRecord(input.coverLetter);
+  const marginPresets = ["narrow", "normal", "moderate"] as const;
+  const paperSizes = ["a4", "letter"] as const;
+  const alignments = ["left", "center", "right"] as const;
+  const experienceOrders = ["title-first", "company-first"] as const;
+  const educationOrders = ["degree-first", "institution-first"] as const;
+  const sectionKeys = ["summary", "experience", "projects", "education", "skills"] as const;
+  const contactKeys = [
+    "email",
+    "phone",
+    "location",
+    "linkedin",
+    "website",
+    "github",
+  ] as const;
+
+  const normalizedSectionOrder = asStringArray(
+    layoutPreferences?.sectionOrder,
+    fallback.layoutPreferences.sectionOrder
+  ).filter((item): item is SectionKey =>
+    (sectionKeys as readonly string[]).includes(item)
+  );
+  const normalizedContactOrder = asStringArray(
+    layoutPreferences?.contactOrder,
+    fallback.layoutPreferences.contactOrder
+  ).filter((item): item is ContactFieldKey =>
+    (contactKeys as readonly string[]).includes(item)
+  );
+
+  const normalizedExperience = Array.isArray(input.experience)
+    ? input.experience.flatMap((item) => {
+        const entry = asRecord(item);
+        if (!entry) return [];
+        return [
+          {
+            id: asString(entry.id, createId()),
+            company: asString(entry.company),
+            jobTitle: asString(entry.jobTitle),
+            location: asString(entry.location),
+            startDate: asString(entry.startDate),
+            endDate: asString(entry.endDate),
+            bullets: asStringArray(entry.bullets, []),
+          },
+        ];
+      })
+    : fallback.experience;
+
+  const normalizedProjects = Array.isArray(input.projects)
+    ? input.projects.flatMap((item) => {
+        const entry = asRecord(item);
+        if (!entry) return [];
+        return [
+          {
+            id: asString(entry.id, createId()),
+            name: asString(entry.name),
+            technologies: asStringArray(entry.technologies, []),
+            bullets: asStringArray(entry.bullets, []),
+          },
+        ];
+      })
+    : fallback.projects;
+
+  const normalizedEducation = Array.isArray(input.education)
+    ? input.education.flatMap((item) => {
+        const entry = asRecord(item);
+        if (!entry) return [];
+        return [
+          {
+            id: asString(entry.id, createId()),
+            degree: asString(entry.degree),
+            institution: asString(entry.institution),
+            location: asString(entry.location),
+            field: asString(entry.field),
+            graduationDate: asString(entry.graduationDate),
+            gpa: asString(entry.gpa),
+            other: asString(entry.other),
+          },
+        ];
+      })
+    : fallback.education;
+
+  const normalizedSkills = Array.isArray(input.skills)
+    ? input.skills.flatMap((item) => {
+        const entry = asRecord(item);
+        if (!entry) return [];
+        return [
+          {
+            id: asString(entry.id, createId()),
+            name: asString(entry.name),
+            category: asString(entry.category),
+          },
+        ];
+      })
+    : fallback.skills;
+
+  const normalizedHyperlinks = Array.isArray(input.hyperlinks)
+    ? input.hyperlinks.flatMap((item) => {
+        const entry = asRecord(item);
+        if (!entry) return [];
+        return [
+          {
+            id: asString(entry.id, createId()),
+            path: asString(entry.path),
+            start: Math.max(0, Math.floor(asNumber(entry.start, 0))),
+            end: Math.max(0, Math.floor(asNumber(entry.end, 0))),
+            text: asString(entry.text),
+            url: asString(entry.url),
+          },
+        ];
+      })
+    : fallback.hyperlinks ?? [];
+
+  return {
+    pageSettings: {
+      paperSize: asOneOf(
+        pageSettings?.paperSize,
+        paperSizes,
+        fallback.pageSettings.paperSize
+      ),
+      resumeMargins: withFallbackMargins(
+        pageSettings?.resumeMargins,
+        fallback.pageSettings.resumeMargins
+      ),
+      resumeMarginPreset: asOneOf(
+        pageSettings?.resumeMarginPreset,
+        marginPresets,
+        fallback.pageSettings.resumeMarginPreset
+      ),
+      coverLetterMargins: withFallbackMargins(
+        pageSettings?.coverLetterMargins,
+        fallback.pageSettings.coverLetterMargins
+      ),
+      coverLetterMarginPreset: asOneOf(
+        pageSettings?.coverLetterMarginPreset,
+        marginPresets,
+        fallback.pageSettings.coverLetterMarginPreset
+      ),
+      margins: withFallbackMargins(
+        pageSettings?.margins,
+        fallback.pageSettings.margins ?? fallback.pageSettings.resumeMargins
+      ),
+      marginPreset: asOneOf(
+        pageSettings?.marginPreset,
+        marginPresets,
+        fallback.pageSettings.marginPreset ?? fallback.pageSettings.resumeMarginPreset
+      ),
+    },
+    metadata: {
+      fullName: asString(metadata?.fullName, fallback.metadata.fullName),
+      subtitle: asString(metadata?.subtitle, fallback.metadata.subtitle),
+      contactInfo: {
+        email: asString(contactInfo?.email, fallback.metadata.contactInfo.email),
+        phone: asString(contactInfo?.phone, fallback.metadata.contactInfo.phone),
+        location: asString(
+          contactInfo?.location,
+          fallback.metadata.contactInfo.location
+        ),
+        linkedin: asString(
+          contactInfo?.linkedin,
+          fallback.metadata.contactInfo.linkedin ?? ""
+        ),
+        website: asString(
+          contactInfo?.website,
+          fallback.metadata.contactInfo.website ?? ""
+        ),
+        github: asString(
+          contactInfo?.github,
+          fallback.metadata.contactInfo.github ?? ""
+        ),
+      },
+      summary: asString(metadata?.summary, fallback.metadata.summary),
+    },
+    sectionVisibility: {
+      summary: asBoolean(
+        sectionVisibility?.summary,
+        fallback.sectionVisibility.summary
+      ),
+      experience: asBoolean(
+        sectionVisibility?.experience,
+        fallback.sectionVisibility.experience
+      ),
+      projects: asBoolean(
+        sectionVisibility?.projects,
+        fallback.sectionVisibility.projects
+      ),
+      education: asBoolean(
+        sectionVisibility?.education,
+        fallback.sectionVisibility.education
+      ),
+      skills: asBoolean(sectionVisibility?.skills, fallback.sectionVisibility.skills),
+    },
+    layoutPreferences: {
+      experienceOrder: asOneOf(
+        layoutPreferences?.experienceOrder,
+        experienceOrders,
+        fallback.layoutPreferences.experienceOrder
+      ),
+      educationOrder: asOneOf(
+        layoutPreferences?.educationOrder,
+        educationOrders,
+        fallback.layoutPreferences.educationOrder
+      ),
+      sectionOrder:
+        normalizedSectionOrder.length > 0
+          ? normalizedSectionOrder
+          : fallback.layoutPreferences.sectionOrder,
+      contactOrder:
+        normalizedContactOrder.length > 0
+          ? normalizedContactOrder
+          : fallback.layoutPreferences.contactOrder,
+      headerAlignment: {
+        name: asOneOf(
+          headerAlignment?.name,
+          alignments,
+          fallback.layoutPreferences.headerAlignment.name
+        ),
+        subtitle: asOneOf(
+          headerAlignment?.subtitle,
+          alignments,
+          fallback.layoutPreferences.headerAlignment.subtitle
+        ),
+        contact: asOneOf(
+          headerAlignment?.contact,
+          alignments,
+          fallback.layoutPreferences.headerAlignment.contact
+        ),
+      },
+      fontPreferences: {
+        family: normalizeFontFamily(
+          fontPreferences?.family,
+          fallback.layoutPreferences.fontPreferences.family
+        ),
+        sizes: {
+          name: asNumber(
+            fontSizes?.name,
+            fallback.layoutPreferences.fontPreferences.sizes.name
+          ),
+          subtitle: asNumber(
+            fontSizes?.subtitle,
+            fallback.layoutPreferences.fontPreferences.sizes.subtitle
+          ),
+          contact: asNumber(
+            fontSizes?.contact,
+            fallback.layoutPreferences.fontPreferences.sizes.contact
+          ),
+          sectionTitle: asNumber(
+            fontSizes?.sectionTitle,
+            fallback.layoutPreferences.fontPreferences.sizes.sectionTitle
+          ),
+          itemTitle: asNumber(
+            fontSizes?.itemTitle,
+            fallback.layoutPreferences.fontPreferences.sizes.itemTitle
+          ),
+          itemDetail: asNumber(
+            fontSizes?.itemDetail,
+            fallback.layoutPreferences.fontPreferences.sizes.itemDetail
+          ),
+          itemMeta: asNumber(
+            fontSizes?.itemMeta,
+            fallback.layoutPreferences.fontPreferences.sizes.itemMeta
+          ),
+          body: asNumber(
+            fontSizes?.body,
+            fallback.layoutPreferences.fontPreferences.sizes.body
+          ),
+        },
+      },
+      coverLetterFontPreferences: {
+        family: normalizeFontFamily(
+          coverLetterFontPreferences?.family,
+          fallback.layoutPreferences.coverLetterFontPreferences.family
+        ),
+        sizes: {
+          name: asNumber(
+            coverLetterFontSizes?.name,
+            fallback.layoutPreferences.coverLetterFontPreferences.sizes.name
+          ),
+          subtitle: asNumber(
+            coverLetterFontSizes?.subtitle,
+            fallback.layoutPreferences.coverLetterFontPreferences.sizes.subtitle
+          ),
+          contact: asNumber(
+            coverLetterFontSizes?.contact,
+            fallback.layoutPreferences.coverLetterFontPreferences.sizes.contact
+          ),
+          sectionTitle: asNumber(
+            coverLetterFontSizes?.sectionTitle,
+            fallback.layoutPreferences.coverLetterFontPreferences.sizes.sectionTitle
+          ),
+          itemTitle: asNumber(
+            coverLetterFontSizes?.itemTitle,
+            fallback.layoutPreferences.coverLetterFontPreferences.sizes.itemTitle
+          ),
+          itemDetail: asNumber(
+            coverLetterFontSizes?.itemDetail,
+            fallback.layoutPreferences.coverLetterFontPreferences.sizes.itemDetail
+          ),
+          itemMeta: asNumber(
+            coverLetterFontSizes?.itemMeta,
+            fallback.layoutPreferences.coverLetterFontPreferences.sizes.itemMeta
+          ),
+          body: asNumber(
+            coverLetterFontSizes?.body,
+            fallback.layoutPreferences.coverLetterFontPreferences.sizes.body
+          ),
+        },
+      },
+      spacing: {
+        nameGap: clampLayoutSpacing(
+          asNumber(spacing?.nameGap, fallback.layoutPreferences.spacing.nameGap)
+        ),
+        contactGap: clampLayoutSpacing(
+          asNumber(
+            spacing?.contactGap,
+            fallback.layoutPreferences.spacing.contactGap
+          )
+        ),
+        bulletGap: clampLayoutSpacing(
+          asNumber(
+            spacing?.bulletGap,
+            fallback.layoutPreferences.spacing.bulletGap
+          )
+        ),
+        entryGap: clampLayoutSpacing(
+          asNumber(spacing?.entryGap, fallback.layoutPreferences.spacing.entryGap)
+        ),
+        sectionGap: clampLayoutSpacing(
+          asNumber(
+            spacing?.sectionGap,
+            fallback.layoutPreferences.spacing.sectionGap
+          )
+        ),
+      },
+      hyperlinkUnderline: asBoolean(
+        layoutPreferences?.hyperlinkUnderline,
+        fallback.layoutPreferences.hyperlinkUnderline
+      ),
+    },
+    aboutMe: asString(input.aboutMe, fallback.aboutMe),
+    coverLetter: {
+      date: asString(coverLetter?.date, fallback.coverLetter.date),
+      hiringManager: asString(
+        coverLetter?.hiringManager,
+        fallback.coverLetter.hiringManager
+      ),
+      companyAddress: asString(
+        coverLetter?.companyAddress,
+        fallback.coverLetter.companyAddress
+      ),
+      body: asString(coverLetter?.body, fallback.coverLetter.body),
+      sendoff: asString(coverLetter?.sendoff, fallback.coverLetter.sendoff),
+    },
+    experience: normalizedExperience,
+    projects: normalizedProjects,
+    education: normalizedEducation,
+    skills: normalizedSkills,
+    hyperlinks: normalizedHyperlinks,
+  };
+};
+
 type HyperlinkContextValue = {
   isPrintPreviewMode: boolean;
   isReadOnly: boolean;
@@ -179,6 +602,11 @@ type HyperlinkContextValue = {
   highlightTone: "before" | "after";
   hyperlinksByPath: Map<string, TextHyperlink[]>;
   hyperlinkUnderlineEnabled: boolean;
+  onWholeFieldHyperlinkEditStart: (
+    path: string,
+    hyperlink: TextHyperlink
+  ) => void;
+  onWholeFieldHyperlinkEditEnd: (path: string) => void;
 };
 
 const HyperlinkContext = createContext<HyperlinkContextValue>({
@@ -189,6 +617,8 @@ const HyperlinkContext = createContext<HyperlinkContextValue>({
   highlightTone: "after",
   hyperlinksByPath: new Map(),
   hyperlinkUnderlineEnabled: true,
+  onWholeFieldHyperlinkEditStart: () => {},
+  onWholeFieldHyperlinkEditEnd: () => {},
 });
 
 const isFieldPathHighlighted = (
@@ -255,6 +685,153 @@ const isHyperlinkRangeValid = (
   return value.slice(hyperlink.start, hyperlink.end) === hyperlink.text;
 };
 
+const findTextChangeRange = (previousText: string, nextText: string) => {
+  let start = 0;
+  const maxPrefixLength = Math.min(previousText.length, nextText.length);
+  while (
+    start < maxPrefixLength &&
+    previousText[start] === nextText[start]
+  ) {
+    start += 1;
+  }
+
+  let previousEnd = previousText.length;
+  let nextEnd = nextText.length;
+  while (
+    previousEnd > start &&
+    nextEnd > start &&
+    previousText[previousEnd - 1] === nextText[nextEnd - 1]
+  ) {
+    previousEnd -= 1;
+    nextEnd -= 1;
+  }
+
+  return { start, previousEnd, nextEnd };
+};
+
+const remapHyperlinkAfterTextChange = (
+  hyperlink: TextHyperlink,
+  previousText: string,
+  nextText: string
+): TextHyperlink | null => {
+  const { start: changeStart, previousEnd, nextEnd } = findTextChangeRange(
+    previousText,
+    nextText
+  );
+  const insertedLength = nextEnd - changeStart;
+  const removedLength = previousEnd - changeStart;
+  const delta = insertedLength - removedLength;
+
+  let nextStart = hyperlink.start;
+  let nextHyperlinkEnd = hyperlink.end;
+
+  if (removedLength === 0) {
+    const insertionPoint = changeStart;
+    if (insertionPoint < hyperlink.start) {
+      nextStart += delta;
+      nextHyperlinkEnd += delta;
+    } else if (insertionPoint <= hyperlink.end) {
+      nextHyperlinkEnd += delta;
+    }
+  } else if (previousEnd <= hyperlink.start) {
+    nextStart += delta;
+    nextHyperlinkEnd += delta;
+  } else if (changeStart >= hyperlink.end) {
+    // Change happened after the hyperlink range.
+  } else if (
+    changeStart <= hyperlink.start &&
+    previousEnd >= hyperlink.end
+  ) {
+    if (insertedLength === 0) {
+      return null;
+    }
+    nextStart = changeStart;
+    nextHyperlinkEnd = nextEnd;
+  } else if (changeStart <= hyperlink.start) {
+    nextStart = changeStart;
+    nextHyperlinkEnd = nextEnd + (hyperlink.end - previousEnd);
+  } else if (previousEnd >= hyperlink.end) {
+    nextHyperlinkEnd = changeStart + insertedLength;
+  } else {
+    nextHyperlinkEnd += delta;
+  }
+
+  nextStart = Math.max(0, Math.min(nextStart, nextText.length));
+  nextHyperlinkEnd = Math.max(
+    nextStart,
+    Math.min(nextHyperlinkEnd, nextText.length)
+  );
+  if (nextHyperlinkEnd <= nextStart) {
+    return null;
+  }
+
+  const nextHyperlinkText = nextText.slice(nextStart, nextHyperlinkEnd);
+  if (!nextHyperlinkText) {
+    return null;
+  }
+
+  return {
+    ...hyperlink,
+    start: nextStart,
+    end: nextHyperlinkEnd,
+    text: nextHyperlinkText,
+  };
+};
+
+const remapHyperlinksForFieldChange = (
+  hyperlinks: TextHyperlink[] | undefined,
+  path: string,
+  previousText: string,
+  nextText: string
+) => {
+  const existing = Array.isArray(hyperlinks) ? hyperlinks : [];
+  if (existing.length === 0 || previousText === nextText) {
+    return existing;
+  }
+
+  const hyperlinksAtPath = existing.filter((hyperlink) => hyperlink.path === path);
+  if (
+    hyperlinksAtPath.length === 1 &&
+    hyperlinksAtPath[0]?.start === 0 &&
+    hyperlinksAtPath[0]?.end === previousText.length &&
+    hyperlinksAtPath[0]?.text === previousText
+  ) {
+    const [wholeFieldHyperlink] = hyperlinksAtPath;
+    const unaffectedHyperlinks = existing.filter(
+      (hyperlink) => hyperlink.path !== path
+    );
+
+    return nextText
+      ? [
+          ...unaffectedHyperlinks,
+          {
+            ...wholeFieldHyperlink,
+            start: 0,
+            end: nextText.length,
+            text: nextText,
+          },
+        ]
+      : unaffectedHyperlinks;
+  }
+
+  return existing.flatMap((hyperlink) => {
+    if (hyperlink.path !== path) {
+      return [hyperlink];
+    }
+
+    const remapped = remapHyperlinkAfterTextChange(
+      hyperlink,
+      previousText,
+      nextText
+    );
+    if (!remapped) {
+      return [];
+    }
+
+    return [remapped];
+  });
+};
+
 function EditableText({
   value,
   onChange,
@@ -272,15 +849,31 @@ function EditableText({
     highlightTone,
     hyperlinksByPath,
     hyperlinkUnderlineEnabled,
+    onWholeFieldHyperlinkEditStart,
+    onWholeFieldHyperlinkEditEnd,
   } =
     useContext(HyperlinkContext);
   const ref = useRef<HTMLSpanElement>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [editingWholeFieldHyperlink, setEditingWholeFieldHyperlink] =
+    useState<TextHyperlink | null>(null);
   const normalizedValue = normalizeText(value, multiline);
   const fieldHyperlinks = useMemo(() => {
     if (!fieldPath) return [] as TextHyperlink[];
     return hyperlinksByPath.get(fieldPath) ?? [];
   }, [fieldPath, hyperlinksByPath]);
+  const wholeFieldHyperlink = useMemo(() => {
+    if (fieldHyperlinks.length !== 1) {
+      return null;
+    }
+
+    const [hyperlink] = fieldHyperlinks;
+    if (hyperlink.start !== 0 || hyperlink.end !== normalizedValue.length) {
+      return null;
+    }
+
+    return hyperlink;
+  }, [fieldHyperlinks, normalizedValue.length]);
   const isPrimaryHighlighted = useMemo(
     () => isFieldPathHighlighted(fieldPath, highlightPaths),
     [fieldPath, highlightPaths]
@@ -289,6 +882,11 @@ function EditableText({
     () => isFieldPathHighlighted(fieldPath, impliedHighlightPaths),
     [fieldPath, impliedHighlightPaths]
   );
+  const highlightState = isImpliedHighlighted
+    ? "implied"
+    : isPrimaryHighlighted
+      ? "primary"
+      : "none";
   const highlightClass = isImpliedHighlighted
     ? "rounded-[2px] bg-amber-200/45 ring-1 ring-amber-400/70 dark:bg-amber-500/20 dark:ring-amber-400/50"
     : isPrimaryHighlighted
@@ -345,16 +943,35 @@ function EditableText({
   );
 
   useEffect(() => {
-    if (!ref.current || isEditing) return;
-    if (ref.current.textContent !== normalizedValue) {
+    if (!ref.current) return;
+    const isFocused =
+      typeof document !== "undefined" && document.activeElement === ref.current;
+
+    if (!isFocused && ref.current.textContent !== normalizedValue) {
       ref.current.textContent = normalizedValue;
     }
-  }, [normalizedValue, isEditing]);
+  }, [normalizedValue]);
 
   useEffect(() => {
     if (!isEditing || !ref.current) return;
     ref.current.focus();
   }, [isEditing]);
+
+  const beginEditing = () => {
+    setIsEditing(true);
+    setEditingWholeFieldHyperlink(wholeFieldHyperlink);
+    if (fieldPath && wholeFieldHyperlink) {
+      onWholeFieldHyperlinkEditStart(fieldPath, wholeFieldHyperlink);
+    }
+  };
+
+  const finishEditing = () => {
+    setIsEditing(false);
+    setEditingWholeFieldHyperlink(null);
+    if (fieldPath) {
+      onWholeFieldHyperlinkEditEnd(fieldPath);
+    }
+  };
 
   const commit = () => {
     if (!ref.current) return;
@@ -391,19 +1008,20 @@ function EditableText({
         )}
         style={style}
         data-field-path={fieldPath}
+        data-highlight-state={highlightState}
         data-placeholder={placeholder}
         role="textbox"
         aria-label={placeholder || "Editable text"}
         tabIndex={isPrintPreviewMode || isReadOnly ? -1 : 0}
         onDoubleClick={() => {
           if (isPrintPreviewMode || isReadOnly) return;
-          setIsEditing(true);
+          beginEditing();
         }}
         onKeyDown={(event) => {
           if (isPrintPreviewMode || isReadOnly) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            setIsEditing(true);
+            beginEditing();
           }
         }}
       >
@@ -445,6 +1063,10 @@ function EditableText({
         multiline
           ? "block whitespace-pre-line break-words"
           : "inline-block max-w-full break-words align-baseline",
+        editingWholeFieldHyperlink &&
+          (hyperlinkUnderlineEnabled
+            ? "underline decoration-gray-500/70 underline-offset-2"
+            : "no-underline"),
         highlightClass,
         className
       )}
@@ -452,17 +1074,18 @@ function EditableText({
       contentEditable={!isPrintPreviewMode && !isReadOnly}
       suppressContentEditableWarning
       data-field-path={fieldPath}
+      data-highlight-state={highlightState}
       data-placeholder={placeholder}
       onInput={isPrintPreviewMode || isReadOnly ? undefined : commit}
       onBlur={() => {
-        setIsEditing(false);
         if (!isPrintPreviewMode && !isReadOnly) {
           commit();
         }
+        finishEditing();
       }}
       onFocus={() => {
-        if (!isPrintPreviewMode && !isReadOnly) {
-          setIsEditing(true);
+        if (!isPrintPreviewMode && !isReadOnly && !isEditing) {
+          beginEditing();
         }
       }}
       onKeyDown={handleKeyDown}
@@ -978,6 +1601,10 @@ export function ResumeViewer({
       fontPreferences: {
         ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences,
         ...layoutPreferences?.fontPreferences,
+        family: normalizeFontFamily(
+          layoutPreferences?.fontPreferences?.family,
+          DEFAULT_LAYOUT_PREFERENCES.fontPreferences.family
+        ),
         sizes: {
           ...DEFAULT_LAYOUT_PREFERENCES.fontPreferences.sizes,
           ...layoutPreferences?.fontPreferences?.sizes,
@@ -986,10 +1613,18 @@ export function ResumeViewer({
       coverLetterFontPreferences: {
         ...DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences,
         ...layoutPreferences?.coverLetterFontPreferences,
+        family: normalizeFontFamily(
+          layoutPreferences?.coverLetterFontPreferences?.family,
+          DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences.family
+        ),
         sizes: {
           ...DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences.sizes,
           ...layoutPreferences?.coverLetterFontPreferences?.sizes,
         },
+      },
+      spacing: {
+        ...DEFAULT_LAYOUT_PREFERENCES.spacing,
+        ...layoutPreferences?.spacing,
       },
     }),
     [layoutPreferences]
@@ -1141,6 +1776,8 @@ export function ResumeViewer({
     "resume-json" | "llm-raw"
   >("resume-json");
   const [didCopyDebugJson, setDidCopyDebugJson] = useState(false);
+  const [didApplyDebugJson, setDidApplyDebugJson] = useState(false);
+  const [debugReplaceError, setDebugReplaceError] = useState<string | null>(null);
   const resumeDebugJson = useMemo(() => {
     try {
       return JSON.stringify(resumeData, null, 2);
@@ -1148,6 +1785,7 @@ export function ResumeViewer({
       return "";
     }
   }, [resumeData]);
+  const [resumeDebugJsonDraft, setResumeDebugJsonDraft] = useState(resumeDebugJson);
   const rawDebugJson = useMemo(() => {
     const source = debugData ?? analysis?.raw;
     if (!source) return "";
@@ -1158,10 +1796,11 @@ export function ResumeViewer({
     }
   }, [analysis, debugData]);
   const activeDebugJson =
-    activeDebugTab === "resume-json" ? resumeDebugJson : rawDebugJson;
+    activeDebugTab === "resume-json" ? resumeDebugJsonDraft : rawDebugJson;
   const resumeContentRef = useRef<HTMLDivElement>(null);
   const resumeViewportRef = useRef<HTMLDivElement>(null);
   const coverLetterViewportRef = useRef<HTMLDivElement>(null);
+  const editingWholeFieldHyperlinksRef = useRef(new Map<string, TextHyperlink>());
   const resumePaginationRecalculateRef = useRef<(() => void) | null>(null);
   const coverLetterPaginationRecalculateRef = useRef<(() => void) | null>(null);
   const charMeasureCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1213,6 +1852,47 @@ export function ResumeViewer({
     }, 1200);
     return () => window.clearTimeout(timeoutId);
   }, [didCopyDebugJson]);
+
+  useEffect(() => {
+    if (!didApplyDebugJson) return;
+    const timeoutId = window.setTimeout(() => {
+      setDidApplyDebugJson(false);
+    }, 1200);
+    return () => window.clearTimeout(timeoutId);
+  }, [didApplyDebugJson]);
+
+  const applyDebugResumeJson = useCallback(() => {
+    if (readOnly) {
+      setDebugReplaceError("Debug JSON replacement is disabled in read-only mode.");
+      setDidApplyDebugJson(false);
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(resumeDebugJsonDraft);
+    } catch {
+      setDebugReplaceError("Invalid JSON. Fix syntax errors and try again.");
+      setDidApplyDebugJson(false);
+      return;
+    }
+
+    const normalized = normalizeResumeFromDebugInput(
+      parsed,
+      DEFAULT_RESUME_DATA
+    );
+    if (!normalized) {
+      setDebugReplaceError("Invalid resume JSON payload.");
+      setDidApplyDebugJson(false);
+      return;
+    }
+
+    onResumeUpdate(normalized);
+    setResumeDebugJsonDraft(JSON.stringify(normalized, null, 2));
+    setDebugReplaceError(null);
+    setDidApplyDebugJson(true);
+    setDidCopyDebugJson(false);
+  }, [onResumeUpdate, readOnly, resumeDebugJsonDraft]);
 
   const copyDebugJson = useCallback(async () => {
     if (!activeDebugJson) return;
@@ -1399,6 +2079,13 @@ export function ResumeViewer({
                 overflow: hidden !important;
               }
 
+              .export-page .editable-field[data-highlight-state="primary"],
+              .export-page .editable-field[data-highlight-state="implied"] {
+                background: transparent !important;
+                box-shadow: none !important;
+                border-radius: 0 !important;
+              }
+
               .print-preview-mode .editable-field:empty::before,
               .export-page .editable-field:empty::before,
               .export-page .editable-field[data-placeholder]::before {
@@ -1463,18 +2150,26 @@ export function ResumeViewer({
     setIsDebugOpen(open);
     if (open) {
       setActiveDebugTab("resume-json");
+      setResumeDebugJsonDraft(resumeDebugJson);
+      setDebugReplaceError(null);
+      setDidApplyDebugJson(false);
+      setDidCopyDebugJson(false);
     }
-  }, []);
+  }, [resumeDebugJson]);
 
   const handleToggleDebug = useCallback(() => {
     setIsDebugOpen((current) => {
       const next = !current;
       if (next) {
         setActiveDebugTab("resume-json");
+        setResumeDebugJsonDraft(resumeDebugJson);
+        setDebugReplaceError(null);
+        setDidApplyDebugJson(false);
+        setDidCopyDebugJson(false);
       }
       return next;
     });
-  }, []);
+  }, [resumeDebugJson]);
 
   useEffect(() => {
     onToolbarActionsReady?.({
@@ -1697,7 +2392,9 @@ export function ResumeViewer({
       const text = (element.textContent ?? "").trim();
       const computed = window.getComputedStyle(element);
       const fontSizePx = parsePxValue(computed.fontSize);
-      const fontFamily = computed.fontFamily || FONT_FAMILY_MAP.serif;
+      const fontFamily =
+        computed.fontFamily ||
+        getFontStack(DEFAULT_LAYOUT_PREFERENCES.fontPreferences.family);
       const fontShorthand =
         computed.font && computed.font !== ""
           ? computed.font
@@ -2251,6 +2948,66 @@ export function ResumeViewer({
     return cursor;
   };
 
+  const buildResumeDataWithRemappedHyperlinks = useCallback((
+    path: string,
+    buildNextData: (current: ResumeData) => ResumeData
+  ) => {
+    const nextData = buildNextData(resumeData);
+    const previousText = getRenderedTextValueAtPath(resumeData, path);
+    const nextText = getRenderedTextValueAtPath(nextData, path);
+    const activeWholeFieldHyperlink =
+      editingWholeFieldHyperlinksRef.current.get(path) ?? null;
+
+    if (activeWholeFieldHyperlink) {
+      const unaffectedHyperlinks = (resumeData.hyperlinks ?? []).filter(
+        (hyperlink) => hyperlink.path !== path
+      );
+
+      return {
+        ...nextData,
+        hyperlinks: nextText
+          ? [
+              ...unaffectedHyperlinks,
+              {
+                ...activeWholeFieldHyperlink,
+                start: 0,
+                end: nextText.length,
+                text: nextText,
+              },
+            ]
+          : unaffectedHyperlinks,
+      };
+    }
+
+    return {
+      ...nextData,
+      hyperlinks: remapHyperlinksForFieldChange(
+        resumeData.hyperlinks,
+        path,
+        previousText,
+        nextText
+      ),
+    };
+  }, [resumeData]);
+
+  const handleWholeFieldHyperlinkEditStart = useCallback((
+    path: string,
+    hyperlink: TextHyperlink
+  ) => {
+    editingWholeFieldHyperlinksRef.current.set(path, hyperlink);
+  }, []);
+
+  const handleWholeFieldHyperlinkEditEnd = useCallback((path: string) => {
+    editingWholeFieldHyperlinksRef.current.delete(path);
+  }, []);
+
+  const updateTextField = useCallback((
+    path: string,
+    buildNextData: (current: ResumeData) => ResumeData
+  ) => {
+    onResumeUpdate(buildResumeDataWithRemappedHyperlinks(path, buildNextData));
+  }, [buildResumeDataWithRemappedHyperlinks, onResumeUpdate]);
+
   const parseJsonValue = <T,>(value: string): T | null => {
     try {
       const parsed = JSON.parse(value) as T;
@@ -2406,10 +3163,12 @@ export function ResumeViewer({
           }
           cursor[segments[segments.length - 1] as keyof typeof cursor] =
             parseCommaList(op.value);
-          return next;
+          return buildResumeDataWithRemappedHyperlinks(op.path, () => next);
         }
       }
-      return setResumeValueAtPath(resumeData, op.path, op.value);
+      return buildResumeDataWithRemappedHyperlinks(op.path, (current) =>
+        setResumeValueAtPath(current, op.path, op.value)
+      );
     }
     if (op.op === "delete") {
       return removeAtPath(resumeData, op.path);
@@ -2447,6 +3206,8 @@ export function ResumeViewer({
   const hasSkills = skills.length > 0;
   const experienceOrder = resolvedLayoutPreferences.experienceOrder;
   const educationOrder = resolvedLayoutPreferences.educationOrder;
+  const resumeSpacing = resolvedLayoutPreferences.spacing;
+  const resumeHeaderContentGap = Math.max(0, resumeSpacing.entryGap - 2);
   const orderedSections = useMemo(() => {
     const fallback: SectionKey[] = [
       "summary",
@@ -2512,6 +3273,10 @@ export function ResumeViewer({
             ...resolvedLayoutPreferences.coverLetterFontPreferences.sizes,
             ...updates.coverLetterFontPreferences?.sizes,
           },
+        },
+        spacing: {
+          ...resolvedLayoutPreferences.spacing,
+          ...updates.spacing,
         },
       },
     });
@@ -2675,17 +3440,14 @@ export function ResumeViewer({
 
   const resumeTypographyStyle = useMemo<CSSProperties>(
     () => ({
-      fontFamily:
-        FONT_FAMILY_MAP[resumeFontPreferences.family] ?? FONT_FAMILY_MAP.serif,
+      fontFamily: getFontStack(resumeFontPreferences.family),
     }),
     [resumeFontPreferences.family]
   );
 
   const coverLetterTypographyStyle = useMemo<CSSProperties>(
     () => ({
-      fontFamily:
-        FONT_FAMILY_MAP[coverLetterFontPreferences.family] ??
-        FONT_FAMILY_MAP.serif,
+      fontFamily: getFontStack(coverLetterFontPreferences.family),
     }),
     [coverLetterFontPreferences.family]
   );
@@ -2906,7 +3668,15 @@ export function ResumeViewer({
       "metadata.summary",
       <EditableText
         value={metadata.summary}
-        onChange={(summary) => updateMetadata({ summary })}
+        onChange={(summary) =>
+          updateTextField("metadata.summary", (current) => ({
+            ...current,
+            metadata: {
+              ...current.metadata,
+              summary,
+            },
+          }))
+        }
         placeholder="Your professional summary will appear here..."
         className="leading-relaxed text-gray-700 dark:text-gray-300"
         style={resumeFontSizeStyles.body}
@@ -2965,9 +3735,17 @@ export function ResumeViewer({
               <EditableText
                 value={entry[primaryField]}
                 onChange={(value) =>
-                  updateExperienceEntry(entry.id, {
-                    [primaryField]: value,
-                  } as Partial<ResumeData["experience"][number]>)
+                  updateTextField(primaryPath, (current) => ({
+                    ...current,
+                    experience: current.experience.map((item) =>
+                      item.id === entry.id
+                        ? ({
+                            ...item,
+                            [primaryField]: value,
+                          } as ResumeData["experience"][number])
+                        : item
+                    ),
+                  }))
                 }
                 placeholder={primaryFallback}
                 fieldPath={primaryPath}
@@ -3006,9 +3784,14 @@ export function ResumeViewer({
                 <EditableText
                   value={entry.startDate}
                   onChange={(value) =>
-                    updateExperienceEntry(entry.id, {
-                      startDate: value,
-                    })
+                    updateTextField(startDatePath, (current) => ({
+                      ...current,
+                      experience: current.experience.map((item) =>
+                        item.id === entry.id
+                          ? { ...item, startDate: value }
+                          : item
+                      ),
+                    }))
                   }
                   placeholder="Start"
                   fieldPath={startDatePath}
@@ -3020,7 +3803,14 @@ export function ResumeViewer({
                 <EditableText
                   value={entry.endDate}
                   onChange={(value) =>
-                    updateExperienceEntry(entry.id, { endDate: value })
+                    updateTextField(endDatePath, (current) => ({
+                      ...current,
+                      experience: current.experience.map((item) =>
+                        item.id === entry.id
+                          ? { ...item, endDate: value }
+                          : item
+                      ),
+                    }))
                   }
                   placeholder="Present"
                   fieldPath={endDatePath}
@@ -3039,9 +3829,17 @@ export function ResumeViewer({
               <EditableText
                 value={entry[secondaryField]}
                 onChange={(value) =>
-                  updateExperienceEntry(entry.id, {
-                    [secondaryField]: value,
-                  } as Partial<ResumeData["experience"][number]>)
+                  updateTextField(secondaryPath, (current) => ({
+                    ...current,
+                    experience: current.experience.map((item) =>
+                      item.id === entry.id
+                        ? ({
+                            ...item,
+                            [secondaryField]: value,
+                          } as ResumeData["experience"][number])
+                        : item
+                    ),
+                  }))
                 }
                 placeholder={secondaryFallback}
                 fieldPath={secondaryPath}
@@ -3057,7 +3855,14 @@ export function ResumeViewer({
               <EditableText
                 value={entry.location}
                 onChange={(value) =>
-                  updateExperienceEntry(entry.id, { location: value })
+                  updateTextField(locationPath, (current) => ({
+                    ...current,
+                    experience: current.experience.map((item) =>
+                      item.id === entry.id
+                        ? { ...item, location: value }
+                        : item
+                    ),
+                  }))
                 }
                 placeholder="Location"
                 fieldPath={locationPath}
@@ -3067,8 +3872,11 @@ export function ResumeViewer({
         </div>
         {entry.bullets.length > 0 && (
           <ul
-            className="m-0 mt-0 list-none space-y-0.5 p-0 leading-[1.15] text-gray-600 dark:text-gray-400"
-            style={resumeFontSizeStyles.body}
+            className="m-0 mt-0 grid list-none p-0 leading-[1.15] text-gray-600 dark:text-gray-400"
+            style={{
+              ...resumeFontSizeStyles.body,
+              rowGap: `${resumeSpacing.bulletGap}px`,
+            }}
             role="list"
           >
             {entry.bullets.map((bullet, idx) => {
@@ -3090,7 +3898,17 @@ export function ResumeViewer({
                   <EditableText
                     value={bullet}
                     onChange={(value) =>
-                      updateExperienceBullet(entry.id, idx, value)
+                      updateTextField(bulletPath, (current) => ({
+                        ...current,
+                        experience: current.experience.map((item) => {
+                          if (item.id !== entry.id) {
+                            return item;
+                          }
+                          const nextBullets = [...item.bullets];
+                          nextBullets[idx] = value;
+                          return { ...item, bullets: nextBullets };
+                        }),
+                      }))
                     }
                     placeholder="Describe your accomplishment..."
                     className="min-w-0 flex-1 break-words self-start leading-[1.15] block"
@@ -3191,7 +4009,14 @@ export function ResumeViewer({
               <EditableText
                 value={project.name}
                 onChange={(value) =>
-                  updateProjectEntry(project.id, { name: value })
+                  updateTextField(namePath, (current) => ({
+                    ...current,
+                    projects: current.projects.map((item) =>
+                      item.id === project.id
+                        ? { ...item, name: value }
+                        : item
+                    ),
+                  }))
                 }
                 placeholder="Project Name"
                 fieldPath={namePath}
@@ -3230,9 +4055,17 @@ export function ResumeViewer({
                 <EditableText
                   value={project.technologies.join(", ")}
                   onChange={(value) =>
-                    updateProjectEntry(project.id, {
-                      technologies: parseCommaList(value),
-                    })
+                    updateTextField(`projects[${projectIndex}].technologies`, (current) => ({
+                      ...current,
+                      projects: current.projects.map((item) =>
+                        item.id === project.id
+                          ? {
+                              ...item,
+                              technologies: parseCommaList(value),
+                            }
+                          : item
+                      ),
+                    }))
                   }
                   placeholder="Technologies"
                   fieldPath={`projects[${projectIndex}].technologies`}
@@ -3243,8 +4076,11 @@ export function ResumeViewer({
         </div>
         {project.bullets.length > 0 && (
           <ul
-            className="m-0 mt-0 list-none space-y-0.5 p-0 leading-[1.15] text-gray-600 dark:text-gray-400"
-            style={resumeFontSizeStyles.body}
+            className="m-0 mt-0 grid list-none p-0 leading-[1.15] text-gray-600 dark:text-gray-400"
+            style={{
+              ...resumeFontSizeStyles.body,
+              rowGap: `${resumeSpacing.bulletGap}px`,
+            }}
             role="list"
           >
             {project.bullets.map((bullet, idx) => {
@@ -3266,7 +4102,17 @@ export function ResumeViewer({
                   <EditableText
                     value={bullet}
                     onChange={(value) =>
-                      updateProjectBullet(project.id, idx, value)
+                      updateTextField(bulletPath, (current) => ({
+                        ...current,
+                        projects: current.projects.map((item) => {
+                          if (item.id !== project.id) {
+                            return item;
+                          }
+                          const nextBullets = [...item.bullets];
+                          nextBullets[idx] = value;
+                          return { ...item, bullets: nextBullets };
+                        }),
+                      }))
                     }
                     placeholder="Project impact..."
                     className="min-w-0 flex-1 break-words self-start leading-[1.15] block"
@@ -3381,9 +4227,17 @@ export function ResumeViewer({
               <EditableText
                 value={entry[primaryField] ?? ""}
                 onChange={(value) =>
-                  updateEducationEntry(entry.id, {
-                    [primaryField]: value,
-                  } as Partial<ResumeData["education"][number]>)
+                  updateTextField(primaryPath, (current) => ({
+                    ...current,
+                    education: current.education.map((item) =>
+                      item.id === entry.id
+                        ? ({
+                            ...item,
+                            [primaryField]: value,
+                          } as ResumeData["education"][number])
+                        : item
+                    ),
+                  }))
                 }
                 placeholder={primaryFallback}
                 fieldPath={primaryPath}
@@ -3411,7 +4265,14 @@ export function ResumeViewer({
                 <EditableText
                   value={entry.graduationDate ?? ""}
                   onChange={(value) =>
-                    updateEducationEntry(entry.id, { graduationDate: value })
+                    updateTextField(graduationPath, (current) => ({
+                      ...current,
+                      education: current.education.map((item) =>
+                        item.id === entry.id
+                          ? { ...item, graduationDate: value }
+                          : item
+                      ),
+                    }))
                   }
                   placeholder="Graduation"
                   fieldPath={graduationPath}
@@ -3430,9 +4291,17 @@ export function ResumeViewer({
               <EditableText
                 value={entry[secondaryField] ?? ""}
                 onChange={(value) =>
-                  updateEducationEntry(entry.id, {
-                    [secondaryField]: value,
-                  } as Partial<ResumeData["education"][number]>)
+                  updateTextField(secondaryPath, (current) => ({
+                    ...current,
+                    education: current.education.map((item) =>
+                      item.id === entry.id
+                        ? ({
+                            ...item,
+                            [secondaryField]: value,
+                          } as ResumeData["education"][number])
+                        : item
+                    ),
+                  }))
                 }
                 placeholder={secondaryFallback}
                 fieldPath={secondaryPath}
@@ -3453,7 +4322,14 @@ export function ResumeViewer({
                     <EditableText
                       value={entry.gpa}
                       onChange={(value) =>
-                        updateEducationEntry(entry.id, { gpa: value })
+                        updateTextField(gpaPath, (current) => ({
+                          ...current,
+                          education: current.education.map((item) =>
+                            item.id === entry.id
+                              ? { ...item, gpa: value }
+                              : item
+                          ),
+                        }))
                       }
                       placeholder="GPA"
                       fieldPath={gpaPath}
@@ -3470,7 +4346,14 @@ export function ResumeViewer({
                   <EditableText
                     value={entry.other}
                     onChange={(value) =>
-                      updateEducationEntry(entry.id, { other: value })
+                      updateTextField(otherPath, (current) => ({
+                        ...current,
+                        education: current.education.map((item) =>
+                          item.id === entry.id
+                            ? { ...item, other: value }
+                            : item
+                        ),
+                      }))
                     }
                     placeholder="Honours"
                     fieldPath={otherPath}
@@ -3488,7 +4371,14 @@ export function ResumeViewer({
               <EditableText
                 value={entry.location ?? ""}
                 onChange={(value) =>
-                  updateEducationEntry(entry.id, { location: value })
+                  updateTextField(locationPath, (current) => ({
+                    ...current,
+                    education: current.education.map((item) =>
+                      item.id === entry.id
+                        ? { ...item, location: value }
+                        : item
+                    ),
+                  }))
                 }
                 placeholder="Location"
                 fieldPath={locationPath}
@@ -3546,7 +4436,18 @@ export function ResumeViewer({
       const content = (
         <EditableText
           value={skill.name}
-          onChange={(value) => updateSkill(skill.id, { name: value })}
+          onChange={(value) =>
+            skillPath
+              ? updateTextField(skillPath, (current) => ({
+                  ...current,
+                  skills: current.skills.map((item) =>
+                    item.id === skill.id
+                      ? { ...item, name: value }
+                      : item
+                  ),
+                }))
+              : updateSkill(skill.id, { name: value })
+          }
           placeholder="Skill"
           fieldPath={skillPath ?? undefined}
         />
@@ -3581,7 +4482,18 @@ export function ResumeViewer({
       const content = (
         <EditableText
           value={category}
-          onChange={(value) => updateSkillCategory(category, value)}
+          onChange={(value) =>
+            categoryPath
+              ? updateTextField(categoryPath, (current) => ({
+                  ...current,
+                  skills: current.skills.map((item) =>
+                    item.category.trim() === category.trim()
+                      ? { ...item, category: value }
+                      : item
+                  ),
+                }))
+              : updateSkillCategory(category, value)
+          }
           placeholder="Category"
           fieldPath={categoryPath ?? undefined}
         />
@@ -3669,8 +4581,9 @@ export function ResumeViewer({
   const resumePagination = usePagination({
     paperSize: resolvedPageSettings.paperSize,
     margins: resolvedPageSettings.resumeMargins,
-    elementGap: 4, // tighter item-to-item gap
-    headerElementGap: 8, // tighter gap after section headers
+    elementGap: resumeSpacing.entryGap,
+    headerElementGap: resumeHeaderContentGap,
+    contentToHeaderGap: resumeSpacing.sectionGap,
   });
   resumePaginationRecalculateRef.current = resumePagination.recalculate;
 
@@ -3794,7 +4707,15 @@ export function ResumeViewer({
                 "metadata.fullName",
                 <EditableText
                   value={metadata.fullName}
-                  onChange={(fullName) => updateMetadata({ fullName })}
+                  onChange={(fullName) =>
+                    updateTextField("metadata.fullName", (current) => ({
+                      ...current,
+                      metadata: {
+                        ...current.metadata,
+                        fullName,
+                      },
+                    }))
+                  }
                   placeholder="Your Name"
                   fieldPath="metadata.fullName"
                 />
@@ -3809,16 +4730,25 @@ export function ResumeViewer({
               "relative w-full group",
               getAlignmentClass(headerAlignment.subtitle)
             )}
+            style={{ marginTop: `${resumeSpacing.nameGap}px` }}
           >
             <p
-              className="mt-0.5 font-medium text-gray-700 dark:text-gray-300"
+              className="font-medium text-gray-700 dark:text-gray-300"
               style={resumeFontSizeStyles.subtitle}
             >
               {renderWithFeedback(
                 "metadata.subtitle",
                 <EditableText
                   value={metadata.subtitle}
-                  onChange={(subtitle) => updateMetadata({ subtitle })}
+                  onChange={(subtitle) =>
+                    updateTextField("metadata.subtitle", (current) => ({
+                      ...current,
+                      metadata: {
+                        ...current.metadata,
+                        subtitle,
+                      },
+                    }))
+                  }
                   placeholder="Professional Title"
                   fieldPath="metadata.subtitle"
                 />
@@ -3833,9 +4763,10 @@ export function ResumeViewer({
               "relative w-full group",
               getAlignmentClass(headerAlignment.contact)
             )}
+            style={{ marginTop: `${resumeSpacing.contactGap}px` }}
           >
             <p
-              className="mt-1 text-gray-600 dark:text-gray-400"
+              className="text-gray-600 dark:text-gray-400"
               style={resumeFontSizeStyles.contact}
             >
               {(() => {
@@ -3856,8 +4787,18 @@ export function ResumeViewer({
                   if (field.optional && value.trim().length === 0) {
                     continue;
                   }
+                  const feedbackPath = `metadata.contactInfo.${key}`;
                   const onChange = (nextValue: string) =>
-                    updateContactInfo({ [key]: nextValue });
+                    updateTextField(feedbackPath, (current) => ({
+                      ...current,
+                      metadata: {
+                        ...current.metadata,
+                        contactInfo: {
+                          ...current.metadata.contactInfo,
+                          [key]: nextValue,
+                        },
+                      },
+                    }));
                   contactItems.push({
                     key,
                     value,
@@ -3871,17 +4812,17 @@ export function ResumeViewer({
                 return contactItems.map((item, index) => (
                   <Fragment key={item.key}>
                     {(() => {
-                    const feedbackPath = `metadata.contactInfo.${item.key}`;
-                    const hasCustomHyperlinks =
-                      (hyperlinksByPath.get(feedbackPath)?.length ?? 0) > 0;
-                    const input = (
-                      <EditableText
-                        value={item.value}
-                        onChange={item.onChange}
-                        placeholder={item.placeholder}
-                        fieldPath={feedbackPath}
-                      />
-                    );
+                      const feedbackPath = `metadata.contactInfo.${item.key}`;
+                      const hasCustomHyperlinks =
+                        (hyperlinksByPath.get(feedbackPath)?.length ?? 0) > 0;
+                      const input = (
+                        <EditableText
+                          value={item.value}
+                          onChange={item.onChange}
+                          placeholder={item.placeholder}
+                          fieldPath={feedbackPath}
+                        />
+                      );
                       const node = item.link && !hasCustomHyperlinks ? (
                         <a
                           href={item.href}
@@ -4321,6 +5262,8 @@ export function ResumeViewer({
         highlightTone,
         hyperlinksByPath,
         hyperlinkUnderlineEnabled: resolvedLayoutPreferences.hyperlinkUnderline,
+        onWholeFieldHyperlinkEditStart: handleWholeFieldHyperlinkEditStart,
+        onWholeFieldHyperlinkEditEnd: handleWholeFieldHyperlinkEditEnd,
       }}
     >
       <div className={cn("relative flex h-full flex-col", isPrintPreviewMode && "print-preview-mode")}>
@@ -4658,6 +5601,22 @@ export function ResumeViewer({
               >
                 {didCopyDebugJson ? "Copied" : "Copy JSON"}
               </Button>
+              {activeDebugTab === "resume-json" ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 px-2 text-[11px]"
+                  onClick={applyDebugResumeJson}
+                  disabled={readOnly || !resumeDebugJsonDraft.trim()}
+                  title={
+                    readOnly
+                      ? "Cannot replace JSON in read-only mode"
+                      : "Replace the current resume with this JSON"
+                  }
+                >
+                  {didApplyDebugJson ? "Applied" : "Apply JSON"}
+                </Button>
+              ) : null}
               {onApplyDebugChanges ? (
                 <Button
                   variant="secondary"
@@ -4683,6 +5642,8 @@ export function ResumeViewer({
             onValueChange={(value) => {
               setActiveDebugTab(value as "resume-json" | "llm-raw");
               setDidCopyDebugJson(false);
+              setDidApplyDebugJson(false);
+              setDebugReplaceError(null);
             }}
             className="mt-2"
           >
@@ -4695,9 +5656,26 @@ export function ResumeViewer({
               </TabsTrigger>
             </TabsList>
             <TabsContent value="resume-json" className="mt-2">
-              <pre className="max-h-80 overflow-auto whitespace-pre-wrap text-[10px] text-muted-foreground">
-                {resumeDebugJson || "No resume data."}
-              </pre>
+              <Textarea
+                value={resumeDebugJsonDraft}
+                onChange={(event) => {
+                  setResumeDebugJsonDraft(event.target.value);
+                  if (debugReplaceError) setDebugReplaceError(null);
+                  if (didApplyDebugJson) setDidApplyDebugJson(false);
+                }}
+                spellCheck={false}
+                className="h-80 resize-y font-mono text-[10px] leading-relaxed"
+              />
+              {debugReplaceError ? (
+                <p className="mt-2 text-[11px] text-destructive">
+                  {debugReplaceError}
+                </p>
+              ) : (
+                <p className="mt-2 text-[10px] text-muted-foreground">
+                  Paste a full or partial resume JSON object. Missing fields will
+                  be added from the default resume shape when you click Apply JSON.
+                </p>
+              )}
             </TabsContent>
             <TabsContent value="llm-raw" className="mt-2">
               <pre className="max-h-80 overflow-auto whitespace-pre-wrap text-[10px] text-muted-foreground">
@@ -4909,30 +5887,24 @@ export function ResumeViewer({
                               return pageElements.map((element, index) => (
                                 (() => {
                                   const previousElement = pageElements[index - 1];
-                                  const isExperienceEntry = element.id.startsWith("experience-");
-                                  const isProjectEntry = element.id.startsWith("project-");
-                                  const isEducationEntry = element.id.startsWith("education-");
-                                  const hasSameSectionEntryBefore =
-                                    (isExperienceEntry &&
-                                      previousElement?.id.startsWith("experience-")) ||
-                                    (isProjectEntry &&
-                                      previousElement?.id.startsWith("project-")) ||
-                                    (isEducationEntry &&
-                                      previousElement?.id.startsWith("education-"));
-                                  const gapClass =
+                                  const marginTop =
                                     index === 0
-                                      ? ""
+                                      ? 0
                                       : element.isHeader
-                                        ? "mt-2"
-                                        : hasSameSectionEntryBefore
-                                          ? "mt-1.5"
-                                          : "mt-1";
+                                        ? resumeSpacing.sectionGap
+                                        : previousElement?.isHeader
+                                          ? resumeHeaderContentGap
+                                          : resumeSpacing.entryGap;
 
                                   return (
                                 <div
                                   key={element.id}
                                   ref={resumeRefCallbacks.get(element.id)}
-                                  className={cn(gapClass)}
+                                  style={
+                                    marginTop > 0
+                                      ? { marginTop: `${marginTop}px` }
+                                      : undefined
+                                  }
                                 >
                                   {element.render()}
                                 </div>

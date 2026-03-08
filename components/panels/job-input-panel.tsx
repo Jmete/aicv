@@ -38,7 +38,10 @@ interface JobInputPanelProps {
   requirementsError: string | null;
   requirementsDebugPayload: unknown | null;
   onAiEdit: () => void;
+  onAiE2E: () => void;
+  onApplyManualSuggestions: (rawSuggestions: string) => void;
   isAiEditing: boolean;
+  aiRunMode: "requirements" | "e2e" | null;
   aiEditError: string | null;
   aiEditProgress: {
     completed: number;
@@ -58,6 +61,9 @@ interface JobInputPanelProps {
   isDiffViewOpen: boolean;
   onToggleDiffView: () => void;
   onResetResume: () => void;
+  onSaveVariation: () => void;
+  saveVariationStatus: "idle" | "saving" | "saved" | "error";
+  saveVariationError: string | null;
 }
 
 const ROLE_FAMILY_LABELS: Record<RoleFamily, string> = {
@@ -89,7 +95,10 @@ export function JobInputPanel({
   requirementsError,
   requirementsDebugPayload,
   onAiEdit,
+  onAiE2E,
+  onApplyManualSuggestions,
   isAiEditing,
+  aiRunMode,
   aiEditError,
   aiEditProgress,
   requirementResolutionById,
@@ -98,11 +107,38 @@ export function JobInputPanel({
   isDiffViewOpen,
   onToggleDiffView,
   onResetResume,
+  onSaveVariation,
+  saveVariationStatus,
+  saveVariationError,
 }: JobInputPanelProps) {
   const canExtract = Boolean(formData.jobUrl.trim());
   const canExtractRequirements = Boolean(formData.jobDescription.trim());
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const [didCopyDebugJson, setDidCopyDebugJson] = useState(false);
+  const [manualSuggestions, setManualSuggestions] = useState("");
+
+  const manualSuggestionsTemplate = useMemo(
+    () =>
+      JSON.stringify(
+        {
+          operations: [
+            {
+              path: "candidate.path.from.input",
+              suggested_edit: "replacement text",
+              reason: "short reason",
+            },
+          ],
+          coverLetter: {
+            hiringManager: "string",
+            companyAddress: "string",
+            body: "string",
+          },
+        },
+        null,
+        2
+      ),
+    []
+  );
 
   const debugJson = useMemo(
     () =>
@@ -119,6 +155,7 @@ export function JobInputPanel({
     return { total, mustHave, niceToHave };
   }, [requirements]);
   const canAiEdit = requirements.length > 0;
+  const canAiE2E = Boolean(formData.jobDescription.trim());
   const aiEditProgressPercent =
     aiEditProgress.total > 0
       ? Math.max(
@@ -126,6 +163,7 @@ export function JobInputPanel({
           Math.min(100, Math.round((aiEditProgress.completed / aiEditProgress.total) * 100))
         )
       : 0;
+  const isSavingVariation = saveVariationStatus === "saving";
   const getMentionDotClass = (
     mentioned: RequirementResolutionState["mentioned"] | null
   ) => {
@@ -191,6 +229,23 @@ export function JobInputPanel({
               </SelectContent>
             </Select>
           </div>
+        </div>
+        <div className="mt-3 space-y-1.5">
+          <label
+            htmlFor="variationTitle"
+            className="text-xs font-medium uppercase tracking-wide text-muted-foreground"
+          >
+            Variation Title
+          </label>
+          <Input
+            id="variationTitle"
+            type="text"
+            placeholder="e.g. Data Engineer - fintech focus"
+            value={formData.variationTitle}
+            onChange={(event) =>
+              onChange({ ...formData, variationTitle: event.target.value })
+            }
+          />
         </div>
       </div>
 
@@ -472,6 +527,39 @@ export function JobInputPanel({
                 </p>
               )}
             </div>
+
+            <div className="mt-3 border-t border-border/60 pt-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Manual Suggestions JSON
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[10px]"
+                  onClick={() => setManualSuggestions(manualSuggestionsTemplate)}
+                >
+                  Use Template
+                </Button>
+              </div>
+              <Textarea
+                value={manualSuggestions}
+                onChange={(event) => setManualSuggestions(event.target.value)}
+                placeholder={manualSuggestionsTemplate}
+                className="mt-2 min-h-[140px] font-mono text-[10px] leading-relaxed"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2 h-8 w-full text-xs"
+                onClick={() => onApplyManualSuggestions(manualSuggestions)}
+                disabled={!manualSuggestions.trim() || isAiEditing}
+              >
+                Apply Suggestions JSON
+              </Button>
+            </div>
           </div>
 
           {extractError ? (
@@ -503,24 +591,66 @@ export function JobInputPanel({
                 />
               </div>
               <p className="text-[10px] text-muted-foreground">
-                {aiEditProgress.completed}/{aiEditProgress.total} requirements
+                {aiRunMode === "e2e"
+                  ? "Running end-to-end AI edit..."
+                  : `${aiEditProgress.completed}/${aiEditProgress.total} requirements`}
               </p>
             </div>
           ) : null}
+          {saveVariationStatus === "error" && saveVariationError ? (
+            <p className="text-[11px] text-destructive">{saveVariationError}</p>
+          ) : null}
+          {saveVariationStatus === "saved" ? (
+            <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
+              Variation saved.
+            </p>
+          ) : null}
           <Button
+            variant="outline"
             className="w-full"
-            onClick={onAiEdit}
-            disabled={!canAiEdit || isAiEditing}
+            onClick={onSaveVariation}
+            disabled={isSavingVariation}
           >
-            {isAiEditing ? (
+            {isSavingVariation ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Editing...
+                Saving...
               </>
             ) : (
-              "AI Edit"
+              "Save Variation"
             )}
           </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              className="w-full"
+              onClick={onAiEdit}
+              disabled={!canAiEdit || isAiEditing}
+            >
+              {isAiEditing && aiRunMode === "requirements" ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Editing...
+                </>
+              ) : (
+                "AI Edit"
+              )}
+            </Button>
+            <Button
+              className="w-full"
+              variant="secondary"
+              onClick={onAiE2E}
+              disabled={!canAiE2E || isAiEditing}
+            >
+              {isAiEditing && aiRunMode === "e2e" ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Running...
+                </>
+              ) : (
+                "AI E2E"
+              )}
+            </Button>
+          </div>
           <div className="flex gap-2">
             <Button
               variant="secondary"

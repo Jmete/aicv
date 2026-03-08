@@ -16,6 +16,7 @@ export interface UsePaginationOptions {
   debounceMs?: number;
   elementGap?: number; // Gap between elements in pixels (e.g., 16 for space-y-4)
   headerElementGap?: number; // Optional smaller gap after headers
+  contentToHeaderGap?: number; // Optional larger gap before section headers
 }
 
 export interface ElementDefinition {
@@ -46,6 +47,7 @@ export function usePagination(
     debounceMs = 100,
     elementGap = 0,
     headerElementGap = elementGap,
+    contentToHeaderGap = elementGap,
   } = options;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -88,10 +90,18 @@ export function usePagination(
       measurements,
       dimensions.contentHeightPx,
       elementGap,
-      headerElementGap
+      headerElementGap,
+      contentToHeaderGap
     );
     setPages(newPages);
-  }, [containerWidth, paperSize, margins, elementGap, headerElementGap]);
+  }, [
+    containerWidth,
+    paperSize,
+    margins,
+    elementGap,
+    headerElementGap,
+    contentToHeaderGap,
+  ]);
 
   const scheduleRecalculate = useCallback(() => {
     if (timeoutRef.current) {

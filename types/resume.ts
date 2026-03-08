@@ -1,11 +1,14 @@
 import type {
   ContactFieldKey,
+  LayoutSpacing,
   MarginPreset,
   PageMargins,
   PaperSize,
 } from "@/lib/resume-defaults";
+import type { FontFamily } from "@/lib/font-options";
 
 export type { ContactFieldKey };
+export type { FontFamily };
 
 export interface PageSettings {
   paperSize: PaperSize;
@@ -65,7 +68,6 @@ export interface EducationEntry {
 export type ExperienceOrder = "title-first" | "company-first";
 export type EducationOrder = "degree-first" | "institution-first";
 export type TextAlignment = "left" | "center" | "right";
-export type FontFamily = "serif" | "sans" | "mono";
 
 export interface FontSizeSettings {
   name: number;
@@ -107,6 +109,7 @@ export interface LayoutPreferences {
   headerAlignment: HeaderAlignment;
   fontPreferences: FontPreferences;
   coverLetterFontPreferences: FontPreferences;
+  spacing: LayoutSpacing;
   hyperlinkUnderline: boolean;
 }
 
@@ -138,6 +141,7 @@ export interface ResumeData {
   metadata: ResumeMetadata;
   sectionVisibility: SectionVisibility;
   layoutPreferences: LayoutPreferences;
+  aboutMe: string;
   coverLetter: CoverLetterData;
   experience: ExperienceEntry[];
   projects: ProjectEntry[];

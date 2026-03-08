@@ -50,17 +50,31 @@ export const MIN_CHARS_PER_LINE = 8;
 
 export const getFontSafetyBuffer = (fontFamily: string): number => {
   const normalized = fontFamily.toLowerCase();
-  if (normalized.includes("mono")) {
+  if (
+    normalized.includes("mono") ||
+    normalized.includes("consolas") ||
+    normalized.includes("courier")
+  ) {
     return 0.995;
   }
   if (
     normalized.includes("georgia") ||
+    normalized.includes("cambria") ||
+    normalized.includes("garamond") ||
     normalized.includes("times") ||
     normalized.includes("serif")
   ) {
     return 0.97;
   }
-  if (normalized.includes("geist") || normalized.includes("sans")) {
+  if (
+    normalized.includes("geist") ||
+    normalized.includes("arial") ||
+    normalized.includes("calibri") ||
+    normalized.includes("helvetica") ||
+    normalized.includes("verdana") ||
+    normalized.includes("trebuchet") ||
+    normalized.includes("sans")
+  ) {
     return 0.98;
   }
   return DEFAULT_LINE_SAFETY_BUFFER;

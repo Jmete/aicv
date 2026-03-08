@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Sidebar } from "./sidebar";
 import { JobInputPanel } from "@/components/panels/job-input-panel";
 import { ResumeViewer } from "@/components/panels/resume-viewer";
@@ -22,6 +23,7 @@ import {
   setResumeValueAtPath,
 } from "@/lib/resume-analysis";
 import {
+  applySelectedProfileResumeUpdate,
   getSelectedResumeData,
   normalizeResumeProfilesData,
 } from "@/lib/resume-profiles";
@@ -38,9 +40,11 @@ import type {
   ResumeAnalysisState,
   ResumeData,
   ResumeProfilesData,
+  TextHyperlink,
 } from "@/types";
 
 export interface ApplicationFormData {
+  variationTitle: string;
   jobUrl: string;
   jobDescription: string;
 }
@@ -106,8 +110,18 @@ interface AiEditResponse {
     editedPath?: string;
     reason?: string;
   }>;
+  coverLetter?: {
+    date?: string;
+    hiringManager?: string;
+    companyAddress?: string;
+    body?: string;
+    reason?: string;
+  };
   error?: string;
+  details?: string;
 }
+
+type AiRunMode = "requirements" | "e2e";
 
 interface AiEditProgressState {
   completed: number;
@@ -127,7 +141,34 @@ type HoveredRequirementState = {
   mentioned: RequirementResolutionState["mentioned"] | null;
 };
 
+type ManualSuggestionOperationInput = {
+  path: string;
+  suggested_edit: string;
+  reason?: string;
+};
+
+type ManualSuggestionsPayload = {
+  operations: ManualSuggestionOperationInput[];
+  coverLetter?: {
+    hiringManager?: string;
+    companyAddress?: string;
+    body?: string;
+  };
+};
+
+interface SavedApplicationRecord {
+  id: number;
+  companyName: string;
+  jobTitle: string;
+  variationTitle: string | null;
+  jobUrl: string | null;
+  jobDescription: string;
+  resumeContent: string | null;
+  coverLetterContent: string | null;
+}
+
 const initialFormData: ApplicationFormData = {
+  variationTitle: "",
   jobUrl: "",
   jobDescription: "",
 };
@@ -145,6 +186,22 @@ const clampWeight = (value: number) =>
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+
+const isStringFieldPath = (data: ResumeData, path: string) => {
+  const segments = parseFieldPath(path);
+  if (segments.length === 0) return false;
+
+  let cursor: any = data;
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const key = segments[index];
+    if (cursor == null) return false;
+    cursor = cursor[key as keyof typeof cursor];
+  }
+  if (cursor == null) return false;
+
+  const last = segments[segments.length - 1];
+  return typeof cursor[last as keyof typeof cursor] === "string";
+};
 
 const REQUIREMENT_TYPES: RequirementType[] = [
   "tool",
@@ -282,6 +339,83 @@ const extractRequirementsPayload = (
     requirements,
   };
 };
+
+const parseManualSuggestionsPayload = (
+  payload: unknown
+): ManualSuggestionsPayload | null => {
+  if (!isObject(payload)) return null;
+  if (!Array.isArray(payload.operations)) return null;
+
+  const operations: ManualSuggestionOperationInput[] = [];
+  for (const item of payload.operations) {
+    if (!isObject(item)) continue;
+    const path =
+      typeof item.path === "string" ? item.path.trim() : "";
+    const suggestedEdit =
+      typeof item.suggested_edit === "string" ? item.suggested_edit : "";
+    const reason = typeof item.reason === "string" ? item.reason : undefined;
+    if (!path) continue;
+    operations.push({ path, suggested_edit: suggestedEdit, reason });
+  }
+
+  let coverLetter: ManualSuggestionsPayload["coverLetter"];
+  if (isObject(payload.coverLetter)) {
+    coverLetter = {
+      ...(typeof payload.coverLetter.hiringManager === "string"
+        ? { hiringManager: payload.coverLetter.hiringManager }
+        : {}),
+      ...(typeof payload.coverLetter.companyAddress === "string"
+        ? { companyAddress: payload.coverLetter.companyAddress }
+        : {}),
+      ...(typeof payload.coverLetter.body === "string"
+        ? { body: payload.coverLetter.body }
+        : {}),
+    };
+  }
+
+  return {
+    operations,
+    ...(coverLetter ? { coverLetter } : {}),
+  };
+};
+
+const parseJsonPayload = (value: unknown): unknown => {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const isCoverLetterData = (
+  value: unknown
+): value is ResumeData["coverLetter"] => {
+  if (!isObject(value)) return false;
+  return (
+    typeof value.date === "string" &&
+    typeof value.hiringManager === "string" &&
+    typeof value.companyAddress === "string" &&
+    typeof value.body === "string" &&
+    typeof value.sendoff === "string"
+  );
+};
+
+const isResumeDataPayload = (value: unknown): value is ResumeData => {
+  if (!isObject(value)) return false;
+  return (
+    isObject(value.pageSettings) &&
+    isObject(value.metadata) &&
+    isObject(value.sectionVisibility) &&
+    isObject(value.layoutPreferences) &&
+    isObject(value.coverLetter) &&
+    Array.isArray(value.experience) &&
+    Array.isArray(value.projects) &&
+    Array.isArray(value.education) &&
+    Array.isArray(value.skills)
+  );
+};
+
 const ensureUniqueIds = <T extends { id: string }>(items: T[]): T[] => {
   const seen = new Set<string>();
   return items.map((item) => {
@@ -295,6 +429,7 @@ const ensureUniqueIds = <T extends { id: string }>(items: T[]): T[] => {
 const withResumeIntegrityGuardrails = (data: ResumeData): ResumeData => {
   return {
     ...data,
+    aboutMe: typeof data.aboutMe === "string" ? data.aboutMe : "",
     experience: ensureUniqueIds(data.experience),
     projects: ensureUniqueIds(data.projects),
     education: ensureUniqueIds(data.education),
@@ -330,7 +465,189 @@ const normalizeFieldText = (value: string, multiline: boolean) => {
 const getRenderedTextValueAtPath = (data: ResumeData, path: string): string =>
   normalizeFieldText(getRawTextValueAtPath(data, path), isMultilineFieldPath(path));
 
+const isHyperlinkRangeValid = (
+  value: string,
+  hyperlink: Pick<TextHyperlink, "start" | "end" | "text">
+) => {
+  if (!Number.isInteger(hyperlink.start) || !Number.isInteger(hyperlink.end)) {
+    return false;
+  }
+  if (hyperlink.start < 0 || hyperlink.end <= hyperlink.start) {
+    return false;
+  }
+  if (hyperlink.end > value.length) {
+    return false;
+  }
+  return value.slice(hyperlink.start, hyperlink.end) === hyperlink.text;
+};
+
+const findTextChangeRange = (previousText: string, nextText: string) => {
+  let start = 0;
+  const maxPrefixLength = Math.min(previousText.length, nextText.length);
+  while (
+    start < maxPrefixLength &&
+    previousText[start] === nextText[start]
+  ) {
+    start += 1;
+  }
+
+  let previousEnd = previousText.length;
+  let nextEnd = nextText.length;
+  while (
+    previousEnd > start &&
+    nextEnd > start &&
+    previousText[previousEnd - 1] === nextText[nextEnd - 1]
+  ) {
+    previousEnd -= 1;
+    nextEnd -= 1;
+  }
+
+  return { start, previousEnd, nextEnd };
+};
+
+const remapHyperlinkAfterTextChange = (
+  hyperlink: TextHyperlink,
+  previousText: string,
+  nextText: string
+): TextHyperlink | null => {
+  if (!isHyperlinkRangeValid(previousText, hyperlink)) {
+    return null;
+  }
+
+  if (
+    hyperlink.start === 0 &&
+    hyperlink.end === previousText.length &&
+    hyperlink.text === previousText
+  ) {
+    if (!nextText) {
+      return null;
+    }
+    return {
+      ...hyperlink,
+      start: 0,
+      end: nextText.length,
+      text: nextText,
+    };
+  }
+
+  const { start: changeStart, previousEnd, nextEnd } = findTextChangeRange(
+    previousText,
+    nextText
+  );
+  const insertedLength = nextEnd - changeStart;
+  const removedLength = previousEnd - changeStart;
+  const delta = insertedLength - removedLength;
+
+  let nextStart = hyperlink.start;
+  let nextHyperlinkEnd = hyperlink.end;
+
+  if (removedLength === 0) {
+    if (changeStart < hyperlink.start) {
+      nextStart += delta;
+      nextHyperlinkEnd += delta;
+    } else if (changeStart <= hyperlink.end) {
+      nextHyperlinkEnd += delta;
+    }
+  } else if (previousEnd <= hyperlink.start) {
+    nextStart += delta;
+    nextHyperlinkEnd += delta;
+  } else if (changeStart >= hyperlink.end) {
+    // Text changed after the hyperlink range.
+  } else if (changeStart <= hyperlink.start && previousEnd >= hyperlink.end) {
+    if (insertedLength === 0) {
+      return null;
+    }
+    nextStart = changeStart;
+    nextHyperlinkEnd = nextEnd;
+  } else if (changeStart <= hyperlink.start) {
+    nextStart = changeStart;
+    nextHyperlinkEnd = nextEnd + (hyperlink.end - previousEnd);
+  } else if (previousEnd >= hyperlink.end) {
+    nextHyperlinkEnd = changeStart + insertedLength;
+  } else {
+    nextHyperlinkEnd += delta;
+  }
+
+  nextStart = Math.max(0, Math.min(nextStart, nextText.length));
+  nextHyperlinkEnd = Math.max(
+    nextStart,
+    Math.min(nextHyperlinkEnd, nextText.length)
+  );
+  if (nextHyperlinkEnd <= nextStart) {
+    return null;
+  }
+
+  const nextHyperlinkText = nextText.slice(nextStart, nextHyperlinkEnd);
+  if (!nextHyperlinkText) {
+    return null;
+  }
+
+  return {
+    ...hyperlink,
+    start: nextStart,
+    end: nextHyperlinkEnd,
+    text: nextHyperlinkText,
+  };
+};
+
+const reconcileResumeHyperlinks = (
+  previousData: ResumeData,
+  nextData: ResumeData
+): ResumeData => {
+  const nextHyperlinks = Array.isArray(nextData.hyperlinks)
+    ? nextData.hyperlinks
+    : Array.isArray(previousData.hyperlinks)
+      ? previousData.hyperlinks
+      : [];
+
+  if (nextHyperlinks.length === 0) {
+    return nextData;
+  }
+
+  const paths = new Set(nextHyperlinks.map((hyperlink) => hyperlink.path));
+  let reconciledHyperlinks = nextHyperlinks;
+
+  for (const path of paths) {
+    const previousText = getRenderedTextValueAtPath(previousData, path);
+    const nextText = getRenderedTextValueAtPath(nextData, path);
+
+    if (previousText === nextText) {
+      continue;
+    }
+
+    reconciledHyperlinks = reconciledHyperlinks.flatMap((hyperlink) => {
+      if (hyperlink.path !== path) {
+        return [hyperlink];
+      }
+
+      const remapped = remapHyperlinkAfterTextChange(
+        hyperlink,
+        previousText,
+        nextText
+      );
+      return remapped ? [remapped] : [];
+    });
+  }
+
+  return {
+    ...nextData,
+    hyperlinks: reconciledHyperlinks,
+  };
+};
+
 export function AppLayout() {
+  const searchParams = useSearchParams();
+  const selectedVariationId = useMemo(() => {
+    const rawVariationId = searchParams.get("variationId")?.trim() ?? "";
+    return rawVariationId || null;
+  }, [searchParams]);
+  const selectedApplicationId = useMemo(() => {
+    const rawId = searchParams.get("applicationId")?.trim() ?? "";
+    if (!rawId) return null;
+    const id = Number(rawId);
+    if (!Number.isInteger(id) || id < 1) return null;
+    return id;
+  }, [searchParams]);
   const [formData, setFormData] = useState<ApplicationFormData>(initialFormData);
   const [isExtractingJobDescription, setIsExtractingJobDescription] =
     useState(false);
@@ -346,6 +663,9 @@ export function AppLayout() {
     unknown | null
   >(null);
   const [isAiEditing, setIsAiEditing] = useState(false);
+  const [activeAiRunMode, setActiveAiRunMode] = useState<AiRunMode | null>(
+    null
+  );
   const [aiEditError, setAiEditError] = useState<string | null>(null);
   const [aiEditProgress, setAiEditProgress] = useState<AiEditProgressState>({
     completed: 0,
@@ -385,6 +705,13 @@ export function AppLayout() {
   const [mobileDiffSection, setMobileDiffSection] = useState<
     "original" | "updated"
   >("updated");
+  const [saveVariationStatus, setSaveVariationStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [saveVariationError, setSaveVariationError] = useState<string | null>(
+    null
+  );
+  const resumeProfilesDataRef = useRef(resumeProfilesData);
   const diffToolbarActionsRef = useRef<{
     exportPdf: () => void;
     togglePrintPreview: () => void;
@@ -406,6 +733,7 @@ export function AppLayout() {
     setExtractedRequirementsPayload(null);
     setRequirementsDebugPayload(null);
     setIsAiEditing(false);
+    setActiveAiRunMode(null);
     setAiEditError(null);
     setAiEditProgress({ completed: 0, total: 0 });
     setRequirementResolutionById({});
@@ -425,6 +753,8 @@ export function AppLayout() {
     });
     setMobileWorkspaceTab("preview");
     setMobileDiffSection("updated");
+    setSaveVariationStatus("idle");
+    setSaveVariationError(null);
     setPageCounts({
       resumePages: 0,
       coverLetterPages: 0,
@@ -432,8 +762,29 @@ export function AppLayout() {
     });
   }, [defaultResumeData]);
 
+  useEffect(() => {
+    resumeProfilesDataRef.current = resumeProfilesData;
+  }, [resumeProfilesData]);
+
   const handleResumeUpdate = useCallback((data: ResumeData) => {
-    setResumeData(withResumeIntegrityGuardrails(data));
+    setResumeData((current) => {
+      const nextResumeData = withResumeIntegrityGuardrails(
+        reconcileResumeHyperlinks(current, data)
+      );
+      const nextProfilesData = applySelectedProfileResumeUpdate(
+        resumeProfilesDataRef.current,
+        nextResumeData
+      );
+
+      resumeProfilesDataRef.current = nextProfilesData;
+      setResumeProfilesData(nextProfilesData);
+
+      setDefaultResumeData(nextResumeData);
+
+      return nextResumeData;
+    });
+    setSaveVariationStatus("idle");
+    setSaveVariationError(null);
   }, []);
 
   const handleFormDataChange = useCallback(
@@ -452,6 +803,8 @@ export function AppLayout() {
       setExtractError(null);
       setRequirementsError(null);
       setAiEditError(null);
+      setSaveVariationStatus("idle");
+      setSaveVariationError(null);
     },
     [formData.jobDescription]
   );
@@ -469,13 +822,23 @@ export function AppLayout() {
     async (nextProfileId: string) => {
       if (
         !nextProfileId ||
-        nextProfileId === resumeProfilesData.selectedProfileId
+        nextProfileId === resumeProfilesDataRef.current.selectedProfileId
       ) {
         return;
       }
 
+      if (typeof document !== "undefined") {
+        const activeElement = document.activeElement;
+        if (activeElement instanceof HTMLElement) {
+          activeElement.blur();
+          await new Promise<void>((resolve) => {
+            window.requestAnimationFrame(() => resolve());
+          });
+        }
+      }
+
       const nextProfilesData = normalizeResumeProfilesData({
-        ...resumeProfilesData,
+        ...resumeProfilesDataRef.current,
         selectedProfileId: nextProfileId,
       });
       const nextBaseResumeData = withResumeIntegrityGuardrails(
@@ -483,6 +846,7 @@ export function AppLayout() {
       );
 
       setIsSelectingProfile(true);
+      resumeProfilesDataRef.current = nextProfilesData;
       setResumeProfilesData(nextProfilesData);
       setDefaultResumeData(nextBaseResumeData);
       setResumeData(nextBaseResumeData);
@@ -493,12 +857,15 @@ export function AppLayout() {
       setRequirementsError(null);
       setAiEditError(null);
       setIsAiEditing(false);
+      setActiveAiRunMode(null);
       setAiEditProgress({ completed: 0, total: 0 });
       setRequirementResolutionById({});
       setAiEditedPaths([]);
       setHoveredRequirement(null);
       setIsDiffViewOpen(false);
       setDiffBaseResume(null);
+      setSaveVariationStatus("idle");
+      setSaveVariationError(null);
 
       try {
         const response = await fetch("/api/resume-data?mode=profiles", {
@@ -515,7 +882,7 @@ export function AppLayout() {
         setIsSelectingProfile(false);
       }
     },
-    [resumeProfilesData]
+    []
   );
 
   useEffect(() => {
@@ -532,9 +899,13 @@ export function AppLayout() {
         if (isActive) {
           setResumeProfilesData(data);
           setDefaultResumeData(selectedResumeData);
-          setResumeData(selectedResumeData);
+          if (selectedApplicationId == null && selectedVariationId == null) {
+            setResumeData(selectedResumeData);
+          }
           setResumeAnalysis(null);
           setImportError(null);
+          setSaveVariationStatus("idle");
+          setSaveVariationError(null);
         }
       } catch (error) {
         console.error("Error loading default resume data:", error);
@@ -546,7 +917,180 @@ export function AppLayout() {
     return () => {
       isActive = false;
     };
+  }, [selectedApplicationId, selectedVariationId]);
+
+  useEffect(() => {
+    if (selectedApplicationId == null && selectedVariationId == null) return;
+    let isActive = true;
+
+    async function loadSavedApplication() {
+      try {
+        const query = selectedVariationId
+          ? `variationId=${encodeURIComponent(selectedVariationId)}`
+          : `id=${selectedApplicationId}`;
+        const response = await fetch(`/api/applications?${query}`);
+        if (!response.ok) {
+          throw new Error("Failed to load saved variation.");
+        }
+        const payload = (await response.json()) as SavedApplicationRecord;
+        const parsedResume = parseJsonPayload(payload.resumeContent);
+        const parsedCoverLetter = parseJsonPayload(payload.coverLetterContent);
+
+        const baseResume = isResumeDataPayload(parsedResume)
+          ? withResumeIntegrityGuardrails(parsedResume)
+          : withResumeIntegrityGuardrails(defaultResumeData);
+        const nextResumeData = isCoverLetterData(parsedCoverLetter)
+          ? {
+              ...baseResume,
+              coverLetter: {
+                ...baseResume.coverLetter,
+                ...parsedCoverLetter,
+              },
+            }
+          : baseResume;
+
+        if (!isActive) return;
+        setFormData({
+          variationTitle:
+            payload.variationTitle?.trim() ||
+            payload.jobTitle?.trim() ||
+            "Untitled Variation",
+          jobUrl: payload.jobUrl ?? "",
+          jobDescription: payload.jobDescription ?? "",
+        });
+        setIsExtractingJobDescription(false);
+        setIsExtractingRequirements(false);
+        setExtractError(null);
+        setRequirementsError(null);
+        setExtractedRequirementsPayload(null);
+        setRequirementsDebugPayload(null);
+        setIsAiEditing(false);
+        setActiveAiRunMode(null);
+        setAiEditError(null);
+        setAiEditProgress({ completed: 0, total: 0 });
+        setRequirementResolutionById({});
+        setAiEditedPaths([]);
+        setHoveredRequirement(null);
+        setResumeData(nextResumeData);
+        setResumeAnalysis(null);
+        setImportError(null);
+        setIsDiffViewOpen(false);
+        setDiffBaseResume(null);
+        setActiveDocumentTab("resume");
+        diffToolbarActionsRef.current = null;
+        setDiffToolbarState({
+          isPrintPreviewMode: true,
+          isDebugOpen: false,
+          isExportingPdf: false,
+        });
+        setMobileDiffSection("updated");
+        setSaveVariationStatus("idle");
+        setSaveVariationError(null);
+      } catch (error) {
+        console.error("Error loading saved application:", error);
+        if (!isActive) return;
+        setAiEditError(
+          error instanceof Error
+            ? error.message
+            : "Failed to load saved variation."
+        );
+      }
+    }
+
+    loadSavedApplication();
+    return () => {
+      isActive = false;
+    };
+  }, [defaultResumeData, selectedApplicationId, selectedVariationId]);
+
+  useEffect(() => {
+    if (saveVariationStatus !== "saved") return;
+    const timeout = window.setTimeout(() => {
+      setSaveVariationStatus("idle");
+    }, 1800);
+    return () => window.clearTimeout(timeout);
+  }, [saveVariationStatus]);
+
+  const deriveCompanyNameFromUrl = useCallback((rawUrl: string) => {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return "";
+    try {
+      const parsed = new URL(trimmed);
+      const hostname = parsed.hostname.replace(/^www\./i, "");
+      if (!hostname) return "";
+      const [base] = hostname.split(".");
+      if (!base) return hostname;
+      return base.charAt(0).toUpperCase() + base.slice(1);
+    } catch {
+      return "";
+    }
   }, []);
+
+  const handleSaveVariation = useCallback(async () => {
+    const variationTitle = formData.variationTitle.trim();
+    if (!variationTitle) {
+      setSaveVariationStatus("error");
+      setSaveVariationError("Enter a title before saving this variation.");
+      return;
+    }
+
+    setSaveVariationStatus("saving");
+    setSaveVariationError(null);
+
+    const extractedRoleTitleForSave =
+      typeof extractedRequirementsPayload?.roleTitle === "string"
+        ? extractedRequirementsPayload.roleTitle.trim()
+        : "";
+    const fallbackJobTitle =
+      extractedRoleTitleForSave ||
+      resumeData.metadata.subtitle.trim() ||
+      variationTitle;
+    const companyName =
+      deriveCompanyNameFromUrl(formData.jobUrl) || "Saved Variation";
+
+    try {
+      const response = await fetch("/api/applications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyName,
+          jobTitle: fallbackJobTitle,
+          variationTitle,
+          jobUrl: formData.jobUrl.trim() || null,
+          jobDescription: formData.jobDescription.trim(),
+          resumeContent: resumeData,
+          coverLetterContent: resumeData.coverLetter,
+          notes: {
+            source: "editor-save-variation",
+            savedAt: new Date().toISOString(),
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(
+          typeof payload?.error === "string" && payload.error.trim()
+            ? payload.error.trim()
+            : "Failed to save variation."
+        );
+      }
+
+      setSaveVariationStatus("saved");
+    } catch (error) {
+      setSaveVariationStatus("error");
+      setSaveVariationError(
+        error instanceof Error ? error.message : "Failed to save variation."
+      );
+    }
+  }, [
+    deriveCompanyNameFromUrl,
+    extractedRequirementsPayload,
+    formData.jobDescription,
+    formData.jobUrl,
+    formData.variationTitle,
+    resumeData,
+  ]);
 
   const handleExtractJobDescription = useCallback(async () => {
     const jobUrl = formData.jobUrl.trim();
@@ -692,86 +1236,89 @@ export function AppLayout() {
     []
   );
 
-  const collectElementLengthProfiles = useCallback((): ElementLengthProfile[] => {
-    if (typeof document === "undefined") return [];
+  const collectElementLengthProfiles = useCallback(
+    (sourceResumeData: ResumeData = resumeData): ElementLengthProfile[] => {
+      if (typeof document === "undefined") return [];
 
-    const elements = Array.from(
-      document.querySelectorAll<HTMLElement>("[data-field-path]")
-    );
-    if (elements.length === 0) return [];
+      const elements = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-field-path]")
+      );
+      if (elements.length === 0) return [];
 
-    // Keep the last occurrence of each path so diff views prefer the current (right) pane.
-    const elementByPath = new Map<string, HTMLElement>();
-    for (const element of elements) {
-      const path = element.dataset.fieldPath?.trim();
-      if (!path) continue;
-      elementByPath.set(path, element);
-    }
+      // Keep the last occurrence of each path so diff views prefer the current (right) pane.
+      const elementByPath = new Map<string, HTMLElement>();
+      for (const element of elements) {
+        const path = element.dataset.fieldPath?.trim();
+        if (!path) continue;
+        elementByPath.set(path, element);
+      }
 
-    const fallbackWidthPx = getFallbackContentWidthPx();
-    const profiles: ElementLengthProfile[] = [];
+      const fallbackWidthPx = getFallbackContentWidthPx();
+      const profiles: ElementLengthProfile[] = [];
 
-    for (const [path, element] of elementByPath.entries()) {
-      const text = getRenderedTextValueAtPath(resumeData, path);
-      const computed = window.getComputedStyle(element);
-      const fontSizePx = Math.max(8, parsePxValue(computed.fontSize));
-      const fontFamily = computed.fontFamily || "serif";
-      const fontShorthand =
-        computed.font && computed.font !== ""
-          ? computed.font
-          : `${computed.fontWeight} ${computed.fontSize} ${fontFamily}`;
-      const lineHeightPx = parsePxValue(computed.lineHeight) || fontSizePx * 1.25;
-      const letterSpacingPx = parsePxValue(computed.letterSpacing);
-      const availableWidthPx = resolveAvailableWidthPx(element, fallbackWidthPx);
-      const safetyBuffer = getFontSafetyBuffer(fontFamily);
-      const charWidthPx = measureCharWidth({
-        element,
-        text,
-        fontShorthand,
-        fontFamily,
-        fontSizePx,
-        lineHeightPx,
-        letterSpacingPx,
-      });
-
-      const oneLineConstraint = buildFieldLengthConstraint(
-        {
-          availableWidthPx,
-          fontSizePx,
+      for (const [path, element] of elementByPath.entries()) {
+        const text = getRenderedTextValueAtPath(sourceResumeData, path);
+        const computed = window.getComputedStyle(element);
+        const fontSizePx = Math.max(8, parsePxValue(computed.fontSize));
+        const fontFamily = computed.fontFamily || "serif";
+        const fontShorthand =
+          computed.font && computed.font !== ""
+            ? computed.font
+            : `${computed.fontWeight} ${computed.fontSize} ${fontFamily}`;
+        const lineHeightPx = parsePxValue(computed.lineHeight) || fontSizePx * 1.25;
+        const letterSpacingPx = parsePxValue(computed.letterSpacing);
+        const availableWidthPx = resolveAvailableWidthPx(element, fallbackWidthPx);
+        const safetyBuffer = getFontSafetyBuffer(fontFamily);
+        const charWidthPx = measureCharWidth({
+          element,
+          text,
+          fontShorthand,
           fontFamily,
-          charWidthPx,
-          safetyBuffer,
-        },
-        1
-      );
-      if (!oneLineConstraint) continue;
-      const usedLineCount = Math.max(
-        1,
-        estimateWrappedLineCount(text, oneLineConstraint.maxCharsPerLine)
-      );
-      const elementConstraint = buildFieldLengthConstraint(
-        {
-          availableWidthPx,
           fontSizePx,
-          fontFamily,
-          charWidthPx,
-          safetyBuffer,
-        },
-        usedLineCount
-      );
-      if (!elementConstraint) continue;
+          lineHeightPx,
+          letterSpacingPx,
+        });
 
-      profiles.push(buildElementLengthProfile(path, text, elementConstraint));
-    }
+        const oneLineConstraint = buildFieldLengthConstraint(
+          {
+            availableWidthPx,
+            fontSizePx,
+            fontFamily,
+            charWidthPx,
+            safetyBuffer,
+          },
+          1
+        );
+        if (!oneLineConstraint) continue;
+        const usedLineCount = Math.max(
+          1,
+          estimateWrappedLineCount(text, oneLineConstraint.maxCharsPerLine)
+        );
+        const elementConstraint = buildFieldLengthConstraint(
+          {
+            availableWidthPx,
+            fontSizePx,
+            fontFamily,
+            charWidthPx,
+            safetyBuffer,
+          },
+          usedLineCount
+        );
+        if (!elementConstraint) continue;
 
-    return profiles.sort((a, b) => a.path.localeCompare(b.path));
-  }, [
-    getFallbackContentWidthPx,
-    measureCharWidth,
-    parsePxValue,
-    resolveAvailableWidthPx,
-    resumeData,
-  ]);
+        profiles.push(buildElementLengthProfile(path, text, elementConstraint));
+      }
+
+      return profiles.sort((a, b) => a.path.localeCompare(b.path));
+    },
+    [
+      getFallbackContentWidthPx,
+      measureCharWidth,
+      parsePxValue,
+      resolveAvailableWidthPx,
+      resumeData,
+    ]
+  );
 
   const handleExtractRequirements = useCallback(async () => {
     const jobDescription = formData.jobDescription.trim();
@@ -839,197 +1386,410 @@ export function AppLayout() {
     }
   }, [collectElementLengthProfiles, formData.jobDescription]);
 
-  const handleAiEdit = useCallback(async () => {
-    const requirements = extractedRequirementsPayload?.requirements ?? [];
-    if (requirements.length === 0) {
-      setAiEditError("Extract requirements before running AI Edit.");
-      return;
-    }
-
-    setIsAiEditing(true);
-    setAiEditError(null);
-    setAiEditProgress({ completed: 0, total: requirements.length });
-    setHoveredRequirement(null);
-
-    try {
-      const elementLengthProfiles = collectElementLengthProfiles();
-      if (elementLengthProfiles.length === 0) {
-        throw new Error("Could not measure resume line constraints.");
+  const runAiEditFlow = useCallback(
+    async (mode: AiRunMode) => {
+      const requirements = extractedRequirementsPayload?.requirements ?? [];
+      if (mode === "requirements" && requirements.length === 0) {
+        setAiEditError("Extract requirements before running AI Edit.");
+        return;
+      }
+      if (mode === "e2e" && !normalizeComparable(formData.jobDescription)) {
+        setAiEditError("Paste or extract job description text first.");
+        return;
       }
 
-      const beforeSnapshot = structuredClone(resumeData);
-      const response = await fetch("/api/ai-edit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requirements,
-          resumeData,
-          elementProfiles: elementLengthProfiles,
-          stream: true,
-        }),
-      });
-      if (!response.ok) {
-        const rawText = await response.text();
+      const progressTotal = mode === "requirements" ? requirements.length : 1;
+      const baseResumeForRun = mode === "e2e" ? defaultResumeData : resumeData;
+
+      setIsAiEditing(true);
+      setActiveAiRunMode(mode);
+      setAiEditError(null);
+      setAiEditProgress({ completed: 0, total: progressTotal });
+      setHoveredRequirement(null);
+
+      try {
+        const elementLengthProfiles = collectElementLengthProfiles(baseResumeForRun);
+        if (elementLengthProfiles.length === 0) {
+          throw new Error("Could not measure resume line constraints.");
+        }
+
+        const beforeSnapshot = structuredClone(baseResumeForRun);
+        const response = await fetch("/api/ai-edit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode,
+            ...(mode === "requirements" ? { requirements } : {}),
+            jobDescription: formData.jobDescription,
+            resumeData: baseResumeForRun,
+            elementProfiles: elementLengthProfiles,
+            stream: true,
+          }),
+        });
+        if (!response.ok) {
+          const rawText = await response.text();
+          let payload: AiEditResponse | null = null;
+          try {
+            payload = rawText ? (JSON.parse(rawText) as AiEditResponse) : null;
+          } catch {
+            payload = null;
+          }
+          const baseError = payload?.error?.trim() || "Failed to generate AI edits.";
+          const details = payload?.details?.trim() || "";
+          throw new Error(details ? `${baseError} ${details}` : baseError);
+        }
+
+        const contentType = response.headers.get("content-type") ?? "";
         let payload: AiEditResponse | null = null;
-        try {
-          payload = rawText ? (JSON.parse(rawText) as AiEditResponse) : null;
-        } catch {
-          payload = null;
-        }
-        throw new Error(payload?.error || "Failed to generate AI edits.");
-      }
+        if (contentType.includes("text/event-stream")) {
+          const reader = response.body?.getReader();
+          if (!reader) {
+            throw new Error("AI Edit stream is unavailable.");
+          }
+          const decoder = new TextDecoder();
+          let buffer = "";
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
 
-      const contentType = response.headers.get("content-type") ?? "";
-      let payload: AiEditResponse | null = null;
-      if (contentType.includes("text/event-stream")) {
-        const reader = response.body?.getReader();
-        if (!reader) {
-          throw new Error("AI Edit stream is unavailable.");
-        }
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+            let separatorIndex = buffer.indexOf("\n\n");
+            while (separatorIndex >= 0) {
+              const block = buffer.slice(0, separatorIndex);
+              buffer = buffer.slice(separatorIndex + 2);
+              separatorIndex = buffer.indexOf("\n\n");
+              if (!block.trim()) continue;
 
-          let separatorIndex = buffer.indexOf("\n\n");
-          while (separatorIndex >= 0) {
-            const block = buffer.slice(0, separatorIndex);
-            buffer = buffer.slice(separatorIndex + 2);
-            separatorIndex = buffer.indexOf("\n\n");
-            if (!block.trim()) continue;
-
-            let event = "message";
-            const dataLines: string[] = [];
-            const lines = block.split("\n");
-            for (const line of lines) {
-              if (line.startsWith("event:")) {
-                event = line.slice("event:".length).trim();
+              let event = "message";
+              const dataLines: string[] = [];
+              const lines = block.split("\n");
+              for (const line of lines) {
+                if (line.startsWith("event:")) {
+                  event = line.slice("event:".length).trim();
+                  continue;
+                }
+                if (line.startsWith("data:")) {
+                  dataLines.push(line.slice("data:".length).trim());
+                }
+              }
+              const dataText = dataLines.join("\n");
+              if (!dataText) continue;
+              let eventPayload: any = null;
+              try {
+                eventPayload = JSON.parse(dataText);
+              } catch {
                 continue;
               }
-              if (line.startsWith("data:")) {
-                dataLines.push(line.slice("data:".length).trim());
+
+              if (event === "progress") {
+                const completed = Number(eventPayload?.completed);
+                const total = Number(eventPayload?.total);
+                if (
+                  Number.isFinite(completed) &&
+                  Number.isFinite(total) &&
+                  total > 0
+                ) {
+                  setAiEditProgress({
+                    completed: Math.max(0, Math.min(total, completed)),
+                    total,
+                  });
+                }
+                continue;
               }
-            }
-            const dataText = dataLines.join("\n");
-            if (!dataText) continue;
-            let eventPayload: any = null;
-            try {
-              eventPayload = JSON.parse(dataText);
-            } catch {
-              continue;
-            }
 
-            if (event === "progress") {
-              const completed = Number(eventPayload?.completed);
-              const total = Number(eventPayload?.total);
-              if (Number.isFinite(completed) && Number.isFinite(total) && total > 0) {
-                setAiEditProgress({
-                  completed: Math.max(0, Math.min(total, completed)),
-                  total,
-                });
+              if (event === "done") {
+                payload = eventPayload as AiEditResponse;
+                continue;
               }
-              continue;
-            }
 
-            if (event === "done") {
-              payload = eventPayload as AiEditResponse;
-              continue;
-            }
-
-            if (event === "error") {
-              throw new Error(
-                typeof eventPayload?.error === "string" && eventPayload.error.trim()
-                  ? eventPayload.error.trim()
-                  : "Failed to generate AI edits."
-              );
+              if (event === "error") {
+                const baseError =
+                  typeof eventPayload?.error === "string" &&
+                  eventPayload.error.trim()
+                    ? eventPayload.error.trim()
+                    : "Failed to generate AI edits.";
+                const details =
+                  typeof eventPayload?.details === "string" &&
+                  eventPayload.details.trim()
+                    ? eventPayload.details.trim()
+                    : "";
+                throw new Error(details ? `${baseError} ${details}` : baseError);
+              }
             }
           }
+        } else {
+          const rawText = await response.text();
+          try {
+            payload = rawText ? (JSON.parse(rawText) as AiEditResponse) : null;
+          } catch {
+            payload = null;
+          }
         }
-      } else {
-        const rawText = await response.text();
-        try {
-          payload = rawText ? (JSON.parse(rawText) as AiEditResponse) : null;
-        } catch {
-          payload = null;
-        }
-      }
 
-      const operations = Array.isArray(payload?.operations)
-        ? payload.operations
-        : [];
-      const report = Array.isArray(payload?.report) ? payload.report : [];
-      const nextRequirementResolutionById: Record<
-        string,
-        RequirementResolutionState
-      > = {};
-      for (const entry of report) {
-        if (!entry?.requirementId) continue;
-        nextRequirementResolutionById[entry.requirementId] = {
-          requirementId: entry.requirementId,
-          mentioned: entry.mentioned,
-          status: entry.status,
-          resolvedPath: entry.editedPath ?? entry.matchedPath ?? null,
-          reason: entry.reason,
-        };
-      }
-      setRequirementResolutionById(nextRequirementResolutionById);
-      setAiEditProgress({
-        completed:
-          report.length > 0
-            ? Math.min(requirements.length, report.length)
-            : requirements.length,
-        total: requirements.length,
-      });
-      const nextEditedPaths = Array.from(
-        new Set(
-          operations
-            .filter((operation) => operation.op === "replace" && operation.path)
-            .map((operation) => operation.path)
-        )
-      );
-      setAiEditedPaths(nextEditedPaths);
-      if (operations.length === 0) {
-        const payloadError =
-          typeof payload?.error === "string" ? payload.error.trim() : "";
-        if (payloadError) {
-          setAiEditError(payloadError);
+        const operations = Array.isArray(payload?.operations) ? payload.operations : [];
+        const nextCoverLetterDate =
+          typeof payload?.coverLetter?.date === "string"
+            ? payload.coverLetter.date.trim()
+            : "";
+        const nextCoverLetterHiringManager =
+          typeof payload?.coverLetter?.hiringManager === "string"
+            ? payload.coverLetter.hiringManager.trim()
+            : "";
+        const nextCoverLetterCompanyAddress =
+          typeof payload?.coverLetter?.companyAddress === "string"
+            ? payload.coverLetter.companyAddress.trim()
+            : "";
+        const nextCoverLetterBody =
+          typeof payload?.coverLetter?.body === "string"
+            ? payload.coverLetter.body.trim()
+            : "";
+        const hasCoverLetterDateUpdate =
+          nextCoverLetterDate.length > 0 &&
+          normalizeComparable(nextCoverLetterDate) !==
+            normalizeComparable(beforeSnapshot.coverLetter.date);
+        const hasCoverLetterHiringManagerUpdate =
+          nextCoverLetterHiringManager.length > 0 &&
+          normalizeComparable(nextCoverLetterHiringManager) !==
+            normalizeComparable(beforeSnapshot.coverLetter.hiringManager);
+        const hasCoverLetterCompanyAddressUpdate =
+          nextCoverLetterCompanyAddress.length > 0 &&
+          normalizeComparable(nextCoverLetterCompanyAddress) !==
+            normalizeComparable(beforeSnapshot.coverLetter.companyAddress);
+        const hasCoverLetterBodyUpdate =
+          nextCoverLetterBody.length > 0 &&
+          normalizeComparable(nextCoverLetterBody) !==
+            normalizeComparable(beforeSnapshot.coverLetter.body);
+        const hasCoverLetterUpdate =
+          hasCoverLetterDateUpdate ||
+          hasCoverLetterHiringManagerUpdate ||
+          hasCoverLetterCompanyAddressUpdate ||
+          hasCoverLetterBodyUpdate;
+        const report = Array.isArray(payload?.report) ? payload.report : [];
+        if (mode === "requirements") {
+          const nextRequirementResolutionById: Record<
+            string,
+            RequirementResolutionState
+          > = {};
+          for (const entry of report) {
+            if (!entry?.requirementId) continue;
+            nextRequirementResolutionById[entry.requirementId] = {
+              requirementId: entry.requirementId,
+              mentioned: entry.mentioned,
+              status: entry.status,
+              resolvedPath: entry.editedPath ?? entry.matchedPath ?? null,
+              reason: entry.reason,
+            };
+          }
+          setRequirementResolutionById(nextRequirementResolutionById);
+          setAiEditProgress({
+            completed:
+              report.length > 0
+                ? Math.min(requirements.length, report.length)
+                : requirements.length,
+            total: requirements.length,
+          });
+        } else {
+          setRequirementResolutionById({});
+          setAiEditProgress({ completed: progressTotal, total: progressTotal });
+        }
+        const nextEditedPaths = Array.from(
+          new Set(
+            operations
+              .filter((operation) => operation.op === "replace" && operation.path)
+              .map((operation) => operation.path)
+          )
+        );
+        setAiEditedPaths(nextEditedPaths);
+        if (operations.length === 0 && !hasCoverLetterUpdate) {
+          const payloadError =
+            typeof payload?.error === "string" ? payload.error.trim() : "";
+          const payloadDetails =
+            typeof payload?.details === "string" ? payload.details.trim() : "";
+          if (payloadError) {
+            setAiEditError(
+              payloadDetails ? `${payloadError} ${payloadDetails}` : payloadError
+            );
+            return;
+          }
+          const hasTemporaryServiceIssue = report.some((entry) =>
+            typeof entry?.reason === "string"
+              ? entry.reason.toLowerCase().includes("temporary ai service issue")
+              : false
+          );
+          setAiEditError(
+            hasTemporaryServiceIssue
+              ? TEMPORARY_AI_EDIT_ERROR
+              : mode === "e2e"
+                ? "No feasible end-to-end edits were found."
+                : "No feasible ATS-safe inline edits were found."
+          );
           return;
         }
-        const hasTemporaryServiceIssue = report.some((entry) =>
-          typeof entry?.reason === "string"
-            ? entry.reason.toLowerCase().includes("temporary ai service issue")
-            : false
+
+        const nextResumeDataFromOperations = operations.reduce((current, operation) => {
+          if (operation.op !== "replace") return current;
+          if (!operation.path || typeof operation.value !== "string") return current;
+          return setResumeValueAtPath(current, operation.path, operation.value);
+        }, beforeSnapshot);
+        const nextResumeData = hasCoverLetterUpdate
+          ? {
+              ...nextResumeDataFromOperations,
+              coverLetter: {
+                ...nextResumeDataFromOperations.coverLetter,
+                ...(hasCoverLetterDateUpdate ? { date: nextCoverLetterDate } : {}),
+                ...(hasCoverLetterHiringManagerUpdate
+                  ? { hiringManager: nextCoverLetterHiringManager }
+                  : {}),
+                ...(hasCoverLetterCompanyAddressUpdate
+                  ? { companyAddress: nextCoverLetterCompanyAddress }
+                  : {}),
+                ...(hasCoverLetterBodyUpdate ? { body: nextCoverLetterBody } : {}),
+              },
+            }
+          : nextResumeDataFromOperations;
+
+        setResumeData(withResumeIntegrityGuardrails(nextResumeData));
+        setSaveVariationStatus("idle");
+        setSaveVariationError(null);
+        setDiffBaseResume(beforeSnapshot);
+        setIsDiffViewOpen(true);
+        setMobileDiffSection("updated");
+        setActiveDocumentTab(
+          operations.length > 0 || !hasCoverLetterUpdate ? "resume" : "cover-letter"
         );
+      } catch (error) {
+        console.error("Error running AI edit:", error);
         setAiEditError(
-          hasTemporaryServiceIssue
-            ? TEMPORARY_AI_EDIT_ERROR
-            : "No feasible ATS-safe inline edits were found."
+          error instanceof Error ? error.message : "Failed to run AI edit."
+        );
+      } finally {
+        setIsAiEditing(false);
+        setActiveAiRunMode(null);
+      }
+    },
+    [
+      collectElementLengthProfiles,
+      defaultResumeData,
+      extractedRequirementsPayload,
+      formData.jobDescription,
+      resumeData,
+    ]
+  );
+
+  const handleAiEdit = useCallback(async () => {
+    await runAiEditFlow("requirements");
+  }, [runAiEditFlow]);
+
+  const handleAiE2E = useCallback(async () => {
+    await runAiEditFlow("e2e");
+  }, [runAiEditFlow]);
+
+  const handleApplyManualSuggestions = useCallback(
+    (rawSuggestions: string) => {
+      setAiEditError(null);
+      setRequirementResolutionById({});
+      setHoveredRequirement(null);
+
+      const rawInput = rawSuggestions.trim();
+      if (!rawInput) {
+        setAiEditError("Paste suggestions JSON before applying.");
+        return;
+      }
+
+      let payload: unknown;
+      try {
+        payload = JSON.parse(rawInput);
+      } catch {
+        setAiEditError("Manual suggestions JSON is invalid.");
+        return;
+      }
+
+      const parsed = parseManualSuggestionsPayload(payload);
+      if (!parsed) {
+        setAiEditError(
+          "JSON must include an `operations` array and optional `coverLetter` object."
         );
         return;
       }
 
-      const nextResumeData = operations.reduce((current, operation) => {
-        if (operation.op !== "replace") return current;
-        if (!operation.path || typeof operation.value !== "string") return current;
+      const beforeSnapshot = structuredClone(resumeData);
+
+      const invalidPaths: string[] = [];
+      const operations = parsed.operations
+        .filter((operation) => {
+          if (!isStringFieldPath(beforeSnapshot, operation.path)) {
+            invalidPaths.push(operation.path);
+            return false;
+          }
+          return true;
+        })
+        .map((operation) => ({
+          path: operation.path,
+          value: operation.suggested_edit,
+        }));
+
+      if (invalidPaths.length > 0) {
+        const preview = invalidPaths.slice(0, 3).join(", ");
+        setAiEditError(
+          `Invalid path${invalidPaths.length > 1 ? "s" : ""}: ${preview}${
+            invalidPaths.length > 3 ? "..." : ""
+          }`
+        );
+        return;
+      }
+
+      const nextResumeFromOperations = operations.reduce((current, operation) => {
         return setResumeValueAtPath(current, operation.path, operation.value);
       }, beforeSnapshot);
 
+      const nextCoverLetterHiringManager =
+        parsed.coverLetter?.hiringManager ??
+        nextResumeFromOperations.coverLetter.hiringManager;
+      const nextCoverLetterCompanyAddress =
+        parsed.coverLetter?.companyAddress ??
+        nextResumeFromOperations.coverLetter.companyAddress;
+      const nextCoverLetterBody =
+        parsed.coverLetter?.body ?? nextResumeFromOperations.coverLetter.body;
+
+      const hasCoverLetterUpdate =
+        normalizeComparable(nextCoverLetterHiringManager) !==
+          normalizeComparable(beforeSnapshot.coverLetter.hiringManager) ||
+        normalizeComparable(nextCoverLetterCompanyAddress) !==
+          normalizeComparable(beforeSnapshot.coverLetter.companyAddress) ||
+        normalizeComparable(nextCoverLetterBody) !==
+          normalizeComparable(beforeSnapshot.coverLetter.body);
+
+      if (operations.length === 0 && !hasCoverLetterUpdate) {
+        setAiEditError("No applicable suggestions found in JSON.");
+        return;
+      }
+
+      const nextResumeData = hasCoverLetterUpdate
+        ? {
+            ...nextResumeFromOperations,
+            coverLetter: {
+              ...nextResumeFromOperations.coverLetter,
+              hiringManager: nextCoverLetterHiringManager,
+              companyAddress: nextCoverLetterCompanyAddress,
+              body: nextCoverLetterBody,
+            },
+          }
+        : nextResumeFromOperations;
+
+      setAiEditedPaths(Array.from(new Set(operations.map((operation) => operation.path))));
+      setAiEditProgress({ completed: 0, total: 0 });
       setResumeData(withResumeIntegrityGuardrails(nextResumeData));
+      setSaveVariationStatus("idle");
+      setSaveVariationError(null);
       setDiffBaseResume(beforeSnapshot);
       setIsDiffViewOpen(true);
       setMobileDiffSection("updated");
-      setActiveDocumentTab("resume");
-    } catch (error) {
-      console.error("Error running AI Edit:", error);
-      setAiEditError(
-        error instanceof Error ? error.message : "Failed to run AI Edit."
+      setActiveDocumentTab(
+        operations.length > 0 || !hasCoverLetterUpdate ? "resume" : "cover-letter"
       );
-    } finally {
-      setIsAiEditing(false);
-    }
-  }, [collectElementLengthProfiles, extractedRequirementsPayload, resumeData]);
+    },
+    [resumeData]
+  );
 
   const handleImportResume = useCallback(async (file: File) => {
     setIsImportingResume(true);
@@ -1068,6 +1828,8 @@ export function AppLayout() {
         setResumeAnalysis(null);
         setIsDiffViewOpen(false);
         setDiffBaseResume(null);
+        setSaveVariationStatus("idle");
+        setSaveVariationError(null);
         return;
       }
 
@@ -1081,6 +1843,8 @@ export function AppLayout() {
       });
       setIsDiffViewOpen(false);
       setDiffBaseResume(null);
+      setSaveVariationStatus("idle");
+      setSaveVariationError(null);
     } catch (error) {
       console.error("Error importing resume:", error);
       setImportError(
@@ -1110,6 +1874,8 @@ export function AppLayout() {
         }
         return setResumeValueAtPath(current, path, replacement);
       });
+      setSaveVariationStatus("idle");
+      setSaveVariationError(null);
       setResumeAnalysis((current) => {
         if (!current) return current;
         const nextFeedback: FieldFeedback[] = current.fieldFeedback.map((entry) => {
@@ -1152,6 +1918,8 @@ export function AppLayout() {
       isDebugOpen: false,
       isExportingPdf: false,
     });
+    setSaveVariationStatus("idle");
+    setSaveVariationError(null);
   }, [defaultResumeData]);
 
   const handleToggleDiffView = useCallback(() => {
@@ -1262,7 +2030,10 @@ export function AppLayout() {
                   requirementsError={requirementsError}
                   requirementsDebugPayload={requirementsDebugPayload}
                   onAiEdit={handleAiEdit}
+                  onAiE2E={handleAiE2E}
+                  onApplyManualSuggestions={handleApplyManualSuggestions}
                   isAiEditing={isAiEditing}
+                  aiRunMode={activeAiRunMode}
                   aiEditError={aiEditError}
                   aiEditProgress={aiEditProgress}
                   requirementResolutionById={requirementResolutionById}
@@ -1277,6 +2048,9 @@ export function AppLayout() {
                   isDiffViewOpen={showDiffView}
                   onToggleDiffView={handleToggleDiffView}
                   onResetResume={handleResetResume}
+                  onSaveVariation={handleSaveVariation}
+                  saveVariationStatus={saveVariationStatus}
+                  saveVariationError={saveVariationError}
                 />
               </>
             ) : (
@@ -1400,6 +2174,7 @@ export function AppLayout() {
                     </div>
                     <div className="min-h-0 flex-1 overflow-hidden">
                       <ResumeViewer
+                        key={`diff-original-${resumeProfilesData.selectedProfileId}`}
                         resumeData={diffBaseResume}
                         onResumeUpdate={handleReadOnlyResumeUpdate}
                         analysis={null}
@@ -1424,6 +2199,7 @@ export function AppLayout() {
                     </div>
                     <div className="min-h-0 flex-1 overflow-hidden">
                       <ResumeViewer
+                        key={`diff-current-${resumeProfilesData.selectedProfileId}`}
                         resumeData={resumeData}
                         onResumeUpdate={handleReadOnlyResumeUpdate}
                         analysis={null}
@@ -1448,6 +2224,7 @@ export function AppLayout() {
               </div>
             ) : diffBaseResume ? (
               <ResumeViewer
+                key={`main-diffable-${resumeProfilesData.selectedProfileId}`}
                 resumeData={resumeData}
                 onResumeUpdate={handleResumeUpdate}
                 analysis={resumeAnalysis}
@@ -1485,6 +2262,7 @@ export function AppLayout() {
               />
             ) : (
               <ResumeViewer
+                key={`main-${resumeProfilesData.selectedProfileId}`}
                 resumeData={resumeData}
                 onResumeUpdate={handleResumeUpdate}
                 analysis={resumeAnalysis}
@@ -1596,7 +2374,10 @@ export function AppLayout() {
                 requirementsError={requirementsError}
                 requirementsDebugPayload={requirementsDebugPayload}
                 onAiEdit={handleAiEdit}
+                onAiE2E={handleAiE2E}
+                onApplyManualSuggestions={handleApplyManualSuggestions}
                 isAiEditing={isAiEditing}
+                aiRunMode={activeAiRunMode}
                 aiEditError={aiEditError}
                 aiEditProgress={aiEditProgress}
                 requirementResolutionById={requirementResolutionById}
@@ -1611,6 +2392,9 @@ export function AppLayout() {
                 isDiffViewOpen={showDiffView}
                 onToggleDiffView={handleToggleDiffView}
                 onResetResume={handleResetResume}
+                onSaveVariation={handleSaveVariation}
+                saveVariationStatus={saveVariationStatus}
+                saveVariationError={saveVariationError}
               />
             ) : mobileWorkspaceTab === "edit" ? (
               <ResumeEditorPanel
@@ -1676,6 +2460,7 @@ export function AppLayout() {
 
                 <div className="min-h-0 flex-1 overflow-hidden">
                   <ResumeViewer
+                    key={`mobile-diff-${mobileDiffSection}-${resumeProfilesData.selectedProfileId}`}
                     resumeData={
                       mobileDiffSection === "original" ? diffBaseResume : resumeData
                     }
@@ -1727,6 +2512,7 @@ export function AppLayout() {
                 </div>
                 <div className="min-h-0 flex-1">
                   <ResumeViewer
+                    key={`mobile-diffable-${resumeProfilesData.selectedProfileId}`}
                     resumeData={resumeData}
                     onResumeUpdate={handleResumeUpdate}
                     analysis={resumeAnalysis}
@@ -1744,6 +2530,7 @@ export function AppLayout() {
               </div>
             ) : (
               <ResumeViewer
+                key={`mobile-main-${resumeProfilesData.selectedProfileId}`}
                 resumeData={resumeData}
                 onResumeUpdate={handleResumeUpdate}
                 analysis={resumeAnalysis}

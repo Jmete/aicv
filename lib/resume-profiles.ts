@@ -1,5 +1,6 @@
 import { createId } from "@/lib/id";
-import { DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
+import { normalizeFontFamily } from "@/lib/font-options";
+import { DEFAULT_LAYOUT_PREFERENCES, DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
 import type {
   ResumeData,
   ResumeProfile,
@@ -120,10 +121,47 @@ const normalizeProfiles = (value: unknown): ResumeProfile[] => {
       if (!isObject(entry)) return null;
       const resumeDataCandidate = entry.resumeData;
       if (!isLikelyResumeData(resumeDataCandidate)) return null;
+      const aboutMe =
+        typeof resumeDataCandidate.aboutMe === "string"
+          ? resumeDataCandidate.aboutMe
+          : "";
+      const layoutPreferences: Record<string, unknown> = isObject(
+        resumeDataCandidate.layoutPreferences
+      )
+        ? resumeDataCandidate.layoutPreferences
+        : {};
+      const fontPreferences = isObject(layoutPreferences.fontPreferences)
+        ? layoutPreferences.fontPreferences
+        : {};
+      const coverLetterFontPreferences = isObject(
+        layoutPreferences.coverLetterFontPreferences
+      )
+        ? layoutPreferences.coverLetterFontPreferences
+        : {};
       return {
         id: resolveProfileId(entry.id),
         name: resolveProfileName(entry.name, index),
-        resumeData: cloneValue(resumeDataCandidate),
+        resumeData: cloneValue({
+          ...resumeDataCandidate,
+          aboutMe,
+          layoutPreferences: {
+            ...layoutPreferences,
+            fontPreferences: {
+              ...fontPreferences,
+              family: normalizeFontFamily(
+                fontPreferences.family,
+                DEFAULT_LAYOUT_PREFERENCES.fontPreferences.family
+              ),
+            },
+            coverLetterFontPreferences: {
+              ...coverLetterFontPreferences,
+              family: normalizeFontFamily(
+                coverLetterFontPreferences.family,
+                DEFAULT_LAYOUT_PREFERENCES.coverLetterFontPreferences.family
+              ),
+            },
+          },
+        }),
       };
     })
     .filter((profile): profile is ResumeProfile => profile !== null);
@@ -213,12 +251,83 @@ const getSectionValue = (data: ResumeData, section: ResumeSyncSection) => {
       layoutPreferences: data.layoutPreferences,
     };
   }
-  if (section === "info") return data.metadata;
-  if (section === "work") return data.experience;
-  if (section === "projects") return data.projects;
-  if (section === "education") return data.education;
-  if (section === "skills") return data.skills;
-  return data.coverLetter;
+  if (section === "info") {
+    return {
+      metadata: data.metadata,
+      aboutMe: data.aboutMe,
+      hyperlinks: (data.hyperlinks ?? []).filter(
+        (hyperlink) => getHyperlinkSection(hyperlink.path) === "info"
+      ),
+    };
+  }
+  if (section === "work") {
+    return {
+      experience: data.experience,
+      hyperlinks: (data.hyperlinks ?? []).filter(
+        (hyperlink) => getHyperlinkSection(hyperlink.path) === "work"
+      ),
+    };
+  }
+  if (section === "projects") {
+    return {
+      projects: data.projects,
+      hyperlinks: (data.hyperlinks ?? []).filter(
+        (hyperlink) => getHyperlinkSection(hyperlink.path) === "projects"
+      ),
+    };
+  }
+  if (section === "education") {
+    return {
+      education: data.education,
+      hyperlinks: (data.hyperlinks ?? []).filter(
+        (hyperlink) => getHyperlinkSection(hyperlink.path) === "education"
+      ),
+    };
+  }
+  if (section === "skills") {
+    return {
+      skills: data.skills,
+      hyperlinks: (data.hyperlinks ?? []).filter(
+        (hyperlink) => getHyperlinkSection(hyperlink.path) === "skills"
+      ),
+    };
+  }
+  return {
+    coverLetter: data.coverLetter,
+    hyperlinks: (data.hyperlinks ?? []).filter(
+      (hyperlink) => getHyperlinkSection(hyperlink.path) === "coverLetter"
+    ),
+  };
+};
+
+const getHyperlinkSection = (
+  path: string
+): ResumeSyncSection | null => {
+  if (path.startsWith("metadata.") || path === "aboutMe") return "info";
+  if (path.startsWith("experience[")) return "work";
+  if (path.startsWith("projects[")) return "projects";
+  if (path.startsWith("education[")) return "education";
+  if (path.startsWith("skills[")) return "skills";
+  if (path.startsWith("coverLetter.")) return "coverLetter";
+  return null;
+};
+
+const mergeSectionHyperlinks = (
+  target: ResumeData,
+  source: ResumeData,
+  section: ResumeSyncSection
+) => {
+  const targetHyperlinks = Array.isArray(target.hyperlinks) ? target.hyperlinks : [];
+  const sourceHyperlinks = Array.isArray(source.hyperlinks) ? source.hyperlinks : [];
+
+  return [
+    ...targetHyperlinks.filter(
+      (hyperlink) => getHyperlinkSection(hyperlink.path) !== section
+    ),
+    ...sourceHyperlinks.filter(
+      (hyperlink) => getHyperlinkSection(hyperlink.path) === section
+    ),
+  ];
 };
 
 const sectionsDiffer = (
@@ -246,21 +355,46 @@ const applySection = (
     };
   }
   if (section === "info") {
-    return { ...target, metadata: cloneValue(source.metadata) };
+    return {
+      ...target,
+      metadata: cloneValue(source.metadata),
+      aboutMe: source.aboutMe,
+      hyperlinks: mergeSectionHyperlinks(target, source, section),
+    };
   }
   if (section === "work") {
-    return { ...target, experience: cloneValue(source.experience) };
+    return {
+      ...target,
+      experience: cloneValue(source.experience),
+      hyperlinks: mergeSectionHyperlinks(target, source, section),
+    };
   }
   if (section === "projects") {
-    return { ...target, projects: cloneValue(source.projects) };
+    return {
+      ...target,
+      projects: cloneValue(source.projects),
+      hyperlinks: mergeSectionHyperlinks(target, source, section),
+    };
   }
   if (section === "education") {
-    return { ...target, education: cloneValue(source.education) };
+    return {
+      ...target,
+      education: cloneValue(source.education),
+      hyperlinks: mergeSectionHyperlinks(target, source, section),
+    };
   }
   if (section === "skills") {
-    return { ...target, skills: cloneValue(source.skills) };
+    return {
+      ...target,
+      skills: cloneValue(source.skills),
+      hyperlinks: mergeSectionHyperlinks(target, source, section),
+    };
   }
-  return { ...target, coverLetter: cloneValue(source.coverLetter) };
+  return {
+    ...target,
+    coverLetter: cloneValue(source.coverLetter),
+    hyperlinks: mergeSectionHyperlinks(target, source, section),
+  };
 };
 
 export const applySelectedProfileResumeUpdate = (

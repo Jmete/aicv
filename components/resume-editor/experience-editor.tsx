@@ -1,9 +1,9 @@
 "use client";
 
+import { BulletListEditor } from "@/components/resume-editor/bullet-list-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { createId } from "@/lib/id";
 import type { ExperienceEntry, ExperienceOrder } from "@/types";
@@ -43,30 +43,6 @@ export function ExperienceEditor({
     onChange(
       experience.map((e) => (e.id === id ? { ...e, ...updates } : e))
     );
-  };
-
-  const updateBullet = (entryId: string, bulletIndex: number, value: string) => {
-    const entry = experience.find((e) => e.id === entryId);
-    if (!entry) return;
-
-    const newBullets = [...entry.bullets];
-    newBullets[bulletIndex] = value;
-    updateEntry(entryId, { bullets: newBullets });
-  };
-
-  const addBullet = (entryId: string) => {
-    const entry = experience.find((e) => e.id === entryId);
-    if (!entry) return;
-
-    updateEntry(entryId, { bullets: [...entry.bullets, ""] });
-  };
-
-  const removeBullet = (entryId: string, bulletIndex: number) => {
-    const entry = experience.find((e) => e.id === entryId);
-    if (!entry || entry.bullets.length <= 1) return;
-
-    const newBullets = entry.bullets.filter((_, i) => i !== bulletIndex);
-    updateEntry(entryId, { bullets: newBullets });
   };
 
   return (
@@ -181,44 +157,13 @@ export function ExperienceEditor({
             </div>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <Label className="text-xs text-muted-foreground">
-                Responsibilities & Achievements
-              </Label>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => addBullet(entry.id)}
-              >
-                <Plus className="mr-1 h-3 w-3" />
-                Add Bullet
-              </Button>
-            </div>
-            {entry.bullets.map((bullet, bulletIndex) => (
-              <div key={bulletIndex} className="flex gap-2">
-                <Textarea
-                  value={bullet}
-                  onChange={(e) =>
-                    updateBullet(entry.id, bulletIndex, e.target.value)
-                  }
-                  placeholder="Describe your accomplishment..."
-                  className="min-h-[60px] resize-none"
-                />
-                {entry.bullets.length > 1 && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => removeBullet(entry.id, bulletIndex)}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                )}
-              </div>
-            ))}
-          </div>
+          <BulletListEditor
+            bullets={entry.bullets}
+            label="Responsibilities & Achievements"
+            placeholder="Describe your accomplishment..."
+            minItems={1}
+            onChange={(bullets) => updateEntry(entry.id, { bullets })}
+          />
         </div>
       ))}
 

@@ -2,11 +2,16 @@ import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { PDFParse } from "pdf-parse";
+import type { LoadParameters, ParseParameters } from "pdf-parse";
 import mammoth from "mammoth";
 import { z } from "zod";
 import { generateObject } from "ai";
 import { AI_MODELS } from "@/lib/ai-models";
-import { DEFAULT_RESUME_DATA } from "@/lib/resume-defaults";
+import { normalizeFontFamily } from "@/lib/font-options";
+import {
+  DEFAULT_RESUME_DATA,
+  clampLayoutSpacing,
+} from "@/lib/resume-defaults";
 import { createId } from "@/lib/id";
 import type { ContactFieldKey, ResumeData, ResumeImportContent } from "@/types";
 
@@ -23,7 +28,6 @@ const CONTACT_FIELD_KEYS = [
 ] as const;
 const SECTION_KEYS = ["summary", "experience", "projects", "education", "skills"] as const;
 const MARGIN_PRESETS = ["narrow", "normal", "moderate"] as const;
-const FONT_FAMILIES = ["serif", "sans", "mono"] as const;
 const EXPERIENCE_ORDER = ["title-first", "company-first"] as const;
 const EDUCATION_ORDER = ["degree-first", "institution-first"] as const;
 const TEXT_ALIGNMENTS = ["left", "center", "right"] as const;
@@ -106,6 +110,63 @@ const resumeImportSchema = z.object({
 
 const sanitizeText = (value: string) =>
   value.replace(/\u0000/g, "").replace(/\r\n/g, "\n").trim();
+
+const readPdfErrorMessage = (
+  error: unknown,
+  fallback = "Could not read text from this PDF. Please upload a text-based PDF."
+) => (error instanceof Error && error.message ? error.message : fallback);
+
+const extractPdfTextAttempt = async (
+  buffer: Buffer,
+  loadOptions: Partial<LoadParameters>,
+  parseOptions: ParseParameters
+) => {
+  const parser = new PDFParse({
+    data: buffer,
+    ...loadOptions,
+  });
+  try {
+    const result = await parser.getText(parseOptions);
+    return result.text ?? "";
+  } finally {
+    await parser.destroy().catch(() => undefined);
+  }
+};
+
+const extractPdfTextByPage = async (
+  buffer: Buffer,
+  loadOptions: Partial<LoadParameters>,
+  parseOptions: ParseParameters
+) => {
+  const parser = new PDFParse({
+    data: buffer,
+    ...loadOptions,
+  });
+
+  try {
+    const info = await parser.getInfo();
+    if (info.total <= 0) return "";
+
+    const chunks: string[] = [];
+    for (let pageNumber = 1; pageNumber <= info.total; pageNumber += 1) {
+      try {
+        const pageResult = await parser.getText({
+          ...parseOptions,
+          partial: [pageNumber],
+        });
+        const pageText = sanitizeText(pageResult.text ?? "");
+        if (pageText) {
+          chunks.push(pageText);
+        }
+      } catch {
+        continue;
+      }
+    }
+    return chunks.join("\n\n");
+  } finally {
+    await parser.destroy().catch(() => undefined);
+  }
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -195,6 +256,24 @@ const normalizeFontSizes = (
   };
 };
 
+const normalizeSpacing = (
+  value: unknown,
+  fallback: ResumeData["layoutPreferences"]["spacing"]
+) => {
+  const source = isRecord(value) ? value : {};
+  return {
+    nameGap: clampLayoutSpacing(asNumber(source.nameGap, fallback.nameGap)),
+    contactGap: clampLayoutSpacing(
+      asNumber(source.contactGap, fallback.contactGap)
+    ),
+    bulletGap: clampLayoutSpacing(asNumber(source.bulletGap, fallback.bulletGap)),
+    entryGap: clampLayoutSpacing(asNumber(source.entryGap, fallback.entryGap)),
+    sectionGap: clampLayoutSpacing(
+      asNumber(source.sectionGap, fallback.sectionGap)
+    ),
+  };
+};
+
 const normalizeHyperlinks = (value: unknown) => {
   if (!Array.isArray(value)) {
     return [...(DEFAULT_RESUME_DATA.hyperlinks ?? [])];
@@ -266,6 +345,7 @@ const normalizeResumeData = (input: unknown): ResumeData | null => {
   )
     ? layoutInput.coverLetterFontPreferences
     : {};
+  const spacingInput = isRecord(layoutInput.spacing) ? layoutInput.spacing : {};
 
   const resumeMargins = normalizeMargins(
     pageSettingsInput.resumeMargins,
@@ -376,9 +456,8 @@ const normalizeResumeData = (input: unknown): ResumeData | null => {
         ),
       },
       fontPreferences: {
-        family: asEnum(
+        family: normalizeFontFamily(
           fontPreferencesInput.family,
-          FONT_FAMILIES,
           base.layoutPreferences.fontPreferences.family
         ),
         sizes: normalizeFontSizes(
@@ -387,9 +466,8 @@ const normalizeResumeData = (input: unknown): ResumeData | null => {
         ),
       },
       coverLetterFontPreferences: {
-        family: asEnum(
+        family: normalizeFontFamily(
           coverLetterFontPreferencesInput.family,
-          FONT_FAMILIES,
           base.layoutPreferences.coverLetterFontPreferences.family
         ),
         sizes: normalizeFontSizes(
@@ -397,11 +475,16 @@ const normalizeResumeData = (input: unknown): ResumeData | null => {
           base.layoutPreferences.coverLetterFontPreferences.sizes
         ),
       },
+      spacing: normalizeSpacing(
+        spacingInput,
+        base.layoutPreferences.spacing
+      ),
       hyperlinkUnderline: asBoolean(
         layoutInput.hyperlinkUnderline,
         base.layoutPreferences.hyperlinkUnderline
       ),
     },
+    aboutMe: asString(input.aboutMe),
     coverLetter: {
       date: asString(coverLetterInput.date),
       hiringManager: asString(coverLetterInput.hiringManager),
@@ -559,17 +642,56 @@ const extractText = async (
   extension: string
 ): Promise<string> => {
   if (extension === ".pdf") {
-    const parser = new PDFParse({ data: buffer });
-    try {
-      const result = await parser.getText();
-      return result.text ?? "";
-    } catch {
-      throw new Error(
-        "Could not read text from this PDF. Please upload a text-based PDF."
-      );
-    } finally {
-      await parser.destroy().catch(() => undefined);
+    const attempts: Array<{
+      loadOptions: Partial<LoadParameters>;
+      parseOptions: ParseParameters;
+    }> = [
+      { loadOptions: {}, parseOptions: {} },
+      { loadOptions: { useSystemFonts: true }, parseOptions: {} },
+      {
+        loadOptions: { useSystemFonts: true },
+        parseOptions: { disableNormalization: true, lineEnforce: false },
+      },
+    ];
+
+    const errors: string[] = [];
+    for (const attempt of attempts) {
+      try {
+        const text = await extractPdfTextAttempt(
+          buffer,
+          attempt.loadOptions,
+          attempt.parseOptions
+        );
+        if (sanitizeText(text)) {
+          return text;
+        }
+      } catch (error) {
+        errors.push(readPdfErrorMessage(error));
+      }
     }
+
+    try {
+      const textByPage = await extractPdfTextByPage(
+        buffer,
+        { useSystemFonts: true },
+        { disableNormalization: true, lineEnforce: false }
+      );
+      if (sanitizeText(textByPage)) {
+        return textByPage;
+      }
+    } catch (error) {
+      errors.push(readPdfErrorMessage(error));
+    }
+
+    if (errors.length > 0) {
+      console.warn("PDF text extraction failed for all strategies.", {
+        errors: Array.from(new Set(errors)),
+      });
+    }
+
+    throw new Error(
+      "Could not read text from this PDF. Please upload a text-based PDF."
+    );
   }
   if (extension === ".docx") {
     try {

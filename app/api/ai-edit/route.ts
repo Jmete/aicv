@@ -11,6 +11,13 @@ export const runtime = "nodejs";
 const MAX_REQUIREMENTS = 24;
 const MAX_DECISION_ATTEMPTS = 3;
 const MAX_RESOLUTIONS_PER_ELEMENT = 2;
+const MAX_E2E_OPERATIONS = 14;
+const MAX_COVER_LETTER_WORDS = 280;
+const MAX_COVER_LETTER_CHARACTERS = 2600;
+const MAX_COVER_LETTER_BULLETS = 8;
+const MAX_COVER_LETTER_SKILLS = 20;
+const MAX_HIRING_MANAGER_CHARACTERS = 120;
+const MAX_COMPANY_ADDRESS_CHARACTERS = 360;
 const TEMPORARY_AI_SERVICE_ERROR =
   "AI provider is temporarily unavailable. Please try AI Edit again.";
 const TEMPORARY_DECISION_REASON =
@@ -38,6 +45,8 @@ const requirementSchema = z.object({
   aliases: z.array(z.string()).default([]),
   jdEvidence: z.array(z.string()).default([]),
 });
+
+const aiEditModeSchema = z.enum(["requirements", "e2e"]);
 
 const elementWordSchema = z.object({
   index: z.number().int().nonnegative(),
@@ -75,9 +84,28 @@ const resumeDataSchema = z
       .optional(),
     metadata: z
       .object({
+        fullName: z.string().optional(),
         subtitle: z.string().optional(),
+        summary: z.string().optional(),
+        contactInfo: z
+          .object({
+            location: z.string().optional(),
+            email: z.string().optional(),
+          })
+          .partial()
+          .optional(),
       })
       .passthrough(),
+    aboutMe: z.string().optional(),
+    coverLetter: z
+      .object({
+        date: z.string().optional(),
+        hiringManager: z.string().optional(),
+        companyAddress: z.string().optional(),
+        body: z.string().optional(),
+      })
+      .partial()
+      .optional(),
     experience: z
       .array(
         z
@@ -120,10 +148,20 @@ const resumeDataSchema = z
   .passthrough();
 
 const requestSchema = z.object({
-  requirements: z.array(requirementSchema).min(1).max(MAX_REQUIREMENTS),
+  mode: aiEditModeSchema.optional().default("requirements"),
+  requirements: z.array(requirementSchema).max(MAX_REQUIREMENTS).optional(),
+  jobDescription: z.string().optional(),
   resumeData: resumeDataSchema,
   elementProfiles: z.array(elementProfileSchema),
   stream: z.boolean().optional(),
+}).superRefine((value, context) => {
+  if (value.mode !== "requirements") return;
+  if (Array.isArray(value.requirements) && value.requirements.length > 0) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ["requirements"],
+    message: "At least one requirement is required for requirements mode.",
+  });
 });
 
 const aiDecisionSchema = z.object({
@@ -133,6 +171,25 @@ const aiDecisionSchema = z.object({
   edited: z.boolean(),
   suggested_edit: z.string(),
   reason: z.string(),
+});
+
+const coverLetterDraftSchema = z.object({
+  hiringManager: z.string(),
+  companyAddress: z.string(),
+  body: z.string(),
+});
+
+const e2eDecisionSchema = z.object({
+  operations: z
+    .array(
+      z.object({
+        path: z.string().min(1),
+        suggested_edit: z.string().min(1),
+        reason: z.string(),
+      })
+    )
+    .max(MAX_E2E_OPERATIONS),
+  coverLetter: coverLetterDraftSchema,
 });
 
 type Requirement = z.infer<typeof requirementSchema>;
@@ -181,8 +238,81 @@ const getPrompt = async () => {
   return readFile(filePath, "utf8");
 };
 
+const getE2ePrompt = async () => {
+  const filePath = path.join(process.cwd(), "lib", "prompts", "ai-edit-e2e.md");
+  return readFile(filePath, "utf8");
+};
+
+const getCoverLetterPrompt = async () => {
+  const filePath = path.join(process.cwd(), "lib", "prompts", "cover-letter.md");
+  return readFile(filePath, "utf8");
+};
+
 const sanitize = (value: string) =>
   value.replace(/\u0000/g, "").replace(/\r\n/g, "\n").trim();
+
+const collapseWhitespace = (value: string) =>
+  value.replace(/\s+/g, " ").trim();
+
+const clip = (value: string, maxLength: number) => value.slice(0, maxLength);
+
+const todayIsoDate = () => new Date().toISOString().slice(0, 10);
+
+const clipList = (items: string[], maxItems: number, maxLength: number) =>
+  items
+    .map((item) => clip(collapseWhitespace(item), maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+
+const trimToWordLimit = (value: string, maxWords: number) => {
+  let words = 0;
+  let output = "";
+  for (const token of value.split(/(\s+)/)) {
+    if (!token) continue;
+    if (/^\s+$/.test(token)) {
+      if (output) output += token;
+      continue;
+    }
+    if (words >= maxWords) break;
+    output += token;
+    words += 1;
+  }
+  return output.trim();
+};
+
+const enforceCoverLetterLength = (value: string) => {
+  const normalized = sanitize(value).replace(/\n{3,}/g, "\n\n");
+  if (!normalized) return "";
+
+  const limitedWords = trimToWordLimit(normalized, MAX_COVER_LETTER_WORDS);
+  const joined = limitedWords || normalized;
+  const limitedChars =
+    joined.length > MAX_COVER_LETTER_CHARACTERS
+      ? joined.slice(0, MAX_COVER_LETTER_CHARACTERS)
+      : joined;
+  return limitedChars.trim();
+};
+
+const sanitizeCoverLetterFields = (
+  draft: Partial<CoverLetterOutput> | null | undefined
+): CoverLetterOutput => {
+  const hiringManager = clip(
+    collapseWhitespace(draft?.hiringManager ?? ""),
+    MAX_HIRING_MANAGER_CHARACTERS
+  );
+  const companyAddress = clip(
+    sanitize(draft?.companyAddress ?? "").replace(/\n{3,}/g, "\n\n"),
+    MAX_COMPANY_ADDRESS_CHARACTERS
+  );
+  const body = enforceCoverLetterLength(draft?.body ?? "");
+
+  return {
+    date: todayIsoDate(),
+    hiringManager: hiringManager || "Hiring Team",
+    companyAddress: companyAddress || "Company Hiring Team",
+    body,
+  };
+};
 
 const normalizeComparable = (value: string) =>
   value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -224,6 +354,13 @@ const getClientFacingAiEditError = (error: unknown) =>
   isTransientAiError(error)
     ? TEMPORARY_AI_SERVICE_ERROR
     : "Failed to generate AI edits.";
+
+const getDebugErrorDetails = (error: unknown) => {
+  if (error instanceof Error) {
+    return sanitize(error.message).slice(0, 500);
+  }
+  return "";
+};
 
 const isExperienceBulletPath = (path: string) =>
   /^experience\[\d+\]\.bullets\[\d+\]$/.test(path);
@@ -520,14 +657,19 @@ const buildCandidates = (
 
 const getConstraintViolation = (
   replacement: string,
-  candidate: Pick<CandidateElement, "maxCharsPerLine" | "maxCharsTotal" | "maxLines">
+  candidate: Pick<CandidateElement, "maxCharsPerLine" | "maxCharsTotal" | "maxLines">,
+  options?: { maxCharsTotal?: number }
 ) => {
+  const maxCharsTotal = Math.min(
+    candidate.maxCharsTotal,
+    options?.maxCharsTotal ?? candidate.maxCharsTotal
+  );
   const wrappedLines = estimateWrappedLineCount(
     replacement,
     candidate.maxCharsPerLine
   );
   const charCount = replacement.length;
-  if (wrappedLines <= candidate.maxLines && charCount <= candidate.maxCharsTotal) {
+  if (wrappedLines <= candidate.maxLines && charCount <= maxCharsTotal) {
     return null;
   }
   return { wrappedLines, charCount };
@@ -554,12 +696,16 @@ const decideRequirement = async (options: {
   candidates: CandidateElement[];
   lockedNoEdit: boolean;
   systemPrompt: string;
+  aboutMe: string;
 }): Promise<DecisionOutcome> => {
-  const { requirement, candidates, lockedNoEdit, systemPrompt } = options;
+  const { requirement, candidates, lockedNoEdit, systemPrompt, aboutMe } = options;
   const candidatesByPath = new Map(candidates.map((candidate) => [candidate.path, candidate]));
   const basePrompt = [
     `Requirement:\n${JSON.stringify(requirement, null, 2)}`,
     `lockedNoEdit: ${lockedNoEdit ? "true" : "false"}`,
+    aboutMe
+      ? `About me (user-provided facts you may use if relevant and truthful):\n${aboutMe}`
+      : "",
     `Candidates in required traversal order:\n${JSON.stringify(
       summarizeCandidates(candidates),
       null,
@@ -723,6 +869,233 @@ type AiEditReportEntry = {
   reason?: string;
 };
 
+type CoverLetterOutput = {
+  date: string;
+  hiringManager: string;
+  companyAddress: string;
+  body: string;
+};
+
+const buildCoverLetterContext = (options: {
+  requirements: Requirement[];
+  report: AiEditReportEntry[];
+  resumeData: ResumeDataInput;
+  jobDescription: string;
+}) => {
+  const { requirements, report, resumeData, jobDescription } = options;
+  const reportById = new Map(report.map((entry) => [entry.requirementId, entry]));
+
+  const requirementMentions = {
+    unresolved: clipList(
+      report
+        .filter((entry) => entry.status === "unresolved")
+        .map((entry) => entry.canonical),
+      MAX_COVER_LETTER_BULLETS,
+      120
+    ),
+    edited: clipList(
+      report
+        .filter((entry) => entry.status === "edited")
+        .map((entry) => entry.canonical),
+      MAX_COVER_LETTER_BULLETS,
+      120
+    ),
+    alreadyMentioned: clipList(
+      report
+        .filter((entry) => entry.status === "already_mentioned")
+        .map((entry) => entry.canonical),
+      MAX_COVER_LETTER_BULLETS,
+      120
+    ),
+    mustHaveUnresolved: clipList(
+      requirements
+        .filter((requirement) => {
+          if (!requirement.mustHave) return false;
+          const status = reportById.get(requirement.id)?.status;
+          return status === "unresolved";
+        })
+        .map((requirement) => requirement.canonical),
+      MAX_COVER_LETTER_BULLETS,
+      120
+    ),
+  };
+
+  const metadata = resumeData.metadata ?? {};
+  const experienceBullets = clipList(
+    (resumeData.experience ?? [])
+      .flatMap((entry) => entry.bullets ?? [])
+      .map((bullet) => sanitize(bullet)),
+    MAX_COVER_LETTER_BULLETS,
+    220
+  );
+  const projectBullets = clipList(
+    (resumeData.projects ?? [])
+      .flatMap((entry) => entry.bullets ?? [])
+      .map((bullet) => sanitize(bullet)),
+    MAX_COVER_LETTER_BULLETS,
+    220
+  );
+  const skills = clipList(
+    (resumeData.skills ?? []).map((skill) => sanitize(skill.name ?? "")),
+    MAX_COVER_LETTER_SKILLS,
+    60
+  );
+
+  return {
+    jobDescription: clip(sanitize(jobDescription), 8000),
+    roleTarget: clip(collapseWhitespace(metadata.subtitle ?? ""), 160),
+    candidate: {
+      name: clip(collapseWhitespace(metadata.fullName ?? ""), 120),
+      summary: clip(sanitize(metadata.summary ?? ""), 900),
+      aboutMe: clip(sanitize(resumeData.aboutMe ?? ""), 2400),
+      location: clip(collapseWhitespace(metadata.contactInfo?.location ?? ""), 120),
+      experienceHighlights: experienceBullets,
+      projectHighlights: projectBullets,
+      skills,
+    },
+    coverLetterDraft: {
+      date: clip(collapseWhitespace(resumeData.coverLetter?.date ?? ""), 32),
+      hiringManager: clip(
+        collapseWhitespace(resumeData.coverLetter?.hiringManager ?? ""),
+        MAX_HIRING_MANAGER_CHARACTERS
+      ),
+      companyAddress: clip(
+        sanitize(resumeData.coverLetter?.companyAddress ?? ""),
+        MAX_COMPANY_ADDRESS_CHARACTERS
+      ),
+      existingBody: clip(sanitize(resumeData.coverLetter?.body ?? ""), 1400),
+    },
+    requirementMentions,
+  };
+};
+
+const generateCoverLetterBody = async (options: {
+  requirements: Requirement[];
+  report: AiEditReportEntry[];
+  resumeData: ResumeDataInput;
+  jobDescription: string;
+}): Promise<CoverLetterOutput | null> => {
+  const { requirements, report, resumeData, jobDescription } = options;
+  const prompt = await getCoverLetterPrompt();
+  const context = buildCoverLetterContext({
+    requirements,
+    report,
+    resumeData,
+    jobDescription,
+  });
+
+  const result = await generateObject({
+    model: AI_MODELS.aiEdit,
+    system: prompt,
+    schema: coverLetterDraftSchema,
+    providerOptions: getOpenAIProviderOptions("aiEdit", {
+      textVerbosity: "low",
+    }),
+    prompt: [
+      "Create a final cover letter draft from this context.",
+      "Return JSON fields hiringManager, companyAddress, and body. Do not include sign-off or signature in body.",
+      `Context:\n${JSON.stringify(context, null, 2)}`,
+    ].join("\n\n"),
+  });
+
+  const draft = sanitizeCoverLetterFields(result.object);
+  if (!draft.body) return null;
+  return draft;
+};
+
+const generateE2eEdits = async (options: {
+  resumeData: ResumeDataInput;
+  jobDescription: string;
+  aboutMe: string;
+  candidates: CandidateElement[];
+}) => {
+  const { resumeData, jobDescription, aboutMe, candidates } = options;
+  const systemPrompt = await getE2ePrompt();
+  const candidatesByPath = new Map(
+    candidates.map((candidate) => [candidate.path, candidate])
+  );
+  const context = {
+    jobDescription: clip(sanitize(jobDescription), 12000),
+    candidate: {
+      name: clip(collapseWhitespace(resumeData.metadata?.fullName ?? ""), 120),
+      targetRole: clip(collapseWhitespace(resumeData.metadata?.subtitle ?? ""), 160),
+      summary: clip(sanitize(resumeData.metadata?.summary ?? ""), 1200),
+      aboutMe: clip(sanitize(aboutMe), 2400),
+    },
+    editableCandidates: summarizeCandidates(candidates),
+    coverLetterDraft: {
+      date: clip(collapseWhitespace(resumeData.coverLetter?.date ?? ""), 32),
+      hiringManager: clip(
+        collapseWhitespace(resumeData.coverLetter?.hiringManager ?? ""),
+        MAX_HIRING_MANAGER_CHARACTERS
+      ),
+      companyAddress: clip(
+        sanitize(resumeData.coverLetter?.companyAddress ?? ""),
+        MAX_COMPANY_ADDRESS_CHARACTERS
+      ),
+      body: clip(sanitize(resumeData.coverLetter?.body ?? ""), 1400),
+    },
+  };
+
+  const result = await generateObject({
+    model: AI_MODELS.aiEdit,
+    system: systemPrompt,
+    schema: e2eDecisionSchema,
+    providerOptions: getOpenAIProviderOptions("aiEdit", {
+      textVerbosity: "low",
+    }),
+    prompt: [
+      "Generate end-to-end resume rewrites and a complete cover letter draft.",
+      `Context:\n${JSON.stringify(context, null, 2)}`,
+    ].join("\n\n"),
+  });
+
+  const seenPaths = new Set<string>();
+  const operations: AiEditOperation[] = [];
+  let operationIndex = 0;
+  for (const draft of result.object.operations ?? []) {
+    const path = sanitize(draft.path ?? "");
+    const suggestedEdit = sanitize(draft.suggested_edit ?? "");
+    if (!path || !suggestedEdit || seenPaths.has(path)) continue;
+
+    const candidate = candidatesByPath.get(path);
+    if (!candidate) continue;
+
+    if (
+      normalizeComparable(candidate.text) ===
+      normalizeComparable(suggestedEdit)
+    ) {
+      continue;
+    }
+
+    const violation = getConstraintViolation(suggestedEdit, candidate, {
+      maxCharsTotal: Math.max(0, candidate.totalCharCount),
+    });
+    if (violation) continue;
+
+    operations.push({
+      op: "replace",
+      path,
+      value: suggestedEdit,
+      index: -1,
+      itemType: path.includes(".bullets[") ? "bullet" : "text",
+      requirementId: `e2e:${path}:${operationIndex}`,
+      mentioned: "implied",
+      feasibleEdit: true,
+      edited: true,
+    });
+    operationIndex += 1;
+    seenPaths.add(path);
+  }
+
+  const coverLetter = sanitizeCoverLetterFields(result.object.coverLetter);
+  if (!coverLetter.body) {
+    return { operations, coverLetter: null };
+  }
+
+  return { operations, coverLetter };
+};
+
 const runAiEdit = async (
   input: Omit<AiEditRequest, "stream"> & {
     onProgress?: (payload: {
@@ -734,12 +1107,88 @@ const runAiEdit = async (
     }) => void | Promise<void>;
   }
 ) => {
-  const { requirements, resumeData, elementProfiles, onProgress } = input;
-  const systemPrompt = await getPrompt();
+  const {
+    mode = "requirements",
+    requirements = [],
+    jobDescription = "",
+    resumeData,
+    elementProfiles,
+    onProgress,
+  } = input;
+  const aboutMe = clip(sanitize(resumeData.aboutMe ?? ""), 2400);
   const profilesByPath = new Map(
     elementProfiles.map((profile) => [profile.path, profile])
   );
   const allCandidates = buildCandidates(resumeData, profilesByPath);
+
+  if (mode === "e2e") {
+    if (!sanitize(jobDescription)) {
+      return {
+        operations: [],
+        report: [],
+        error: "Paste or extract job description text first.",
+      };
+    }
+    const total = 1;
+    const { operations, coverLetter: e2eCoverLetter } = await generateE2eEdits({
+      resumeData,
+      jobDescription,
+      aboutMe,
+      candidates: allCandidates,
+    });
+
+    let coverLetter = e2eCoverLetter;
+    let transientCoverLetterFailure = false;
+
+    if (!coverLetter || !coverLetter.body) {
+      try {
+        coverLetter = await generateCoverLetterBody({
+          requirements: [],
+          report: [],
+          resumeData,
+          jobDescription,
+        });
+      } catch (error) {
+        if (!isTransientAiError(error)) {
+          console.error("E2E cover letter generation failed:", error);
+        } else {
+          transientCoverLetterFailure = true;
+          console.warn("E2E cover letter transient failure:", error);
+        }
+      }
+    }
+
+    if (onProgress) {
+      await onProgress({
+        completed: total,
+        total,
+        requirementId: "e2e",
+        canonical: "End-to-end resume edit",
+        status: operations.length > 0 ? "edited" : "unresolved",
+      });
+    }
+
+    return {
+      operations,
+      report: [],
+      ...(coverLetter ? { coverLetter } : {}),
+      ...(operations.length === 0 &&
+      !coverLetter &&
+      transientCoverLetterFailure
+        ? { error: TEMPORARY_AI_SERVICE_ERROR }
+        : {}),
+    };
+  }
+
+  if (requirements.length === 0) {
+    return {
+      operations: [],
+      report: [],
+      error: "Extract requirements before running AI Edit.",
+    };
+  }
+
+  const systemPrompt = await getPrompt();
   const resolutionCountByPath = new Map<string, number>();
   const total = requirements.length;
   let completed = 0;
@@ -816,6 +1265,7 @@ const runAiEdit = async (
         candidates: availableCandidates,
         lockedNoEdit,
         systemPrompt,
+        aboutMe,
       });
     } catch (error) {
       if (!isTransientAiError(error)) {
@@ -904,10 +1354,31 @@ const runAiEdit = async (
     });
   }
 
+  let coverLetter: CoverLetterOutput | null = null;
+  let transientCoverLetterFailure = false;
+  try {
+    coverLetter = await generateCoverLetterBody({
+      requirements,
+      report,
+      resumeData,
+      jobDescription,
+    });
+  } catch (error) {
+    if (!isTransientAiError(error)) {
+      console.error("Cover letter generation failed:", error);
+    } else {
+      transientCoverLetterFailure = true;
+      console.warn("Cover letter generation transient failure:", error);
+    }
+  }
+
   return {
     operations,
     report,
-    ...(operations.length === 0 && transientDecisionFailures > 0
+    ...(coverLetter ? { coverLetter } : {}),
+    ...(operations.length === 0 &&
+    !coverLetter &&
+    (transientDecisionFailures > 0 || transientCoverLetterFailure)
       ? { error: TEMPORARY_AI_SERVICE_ERROR }
       : {}),
   };
@@ -950,7 +1421,12 @@ export async function POST(request: Request) {
             controller.close();
           } catch (error) {
             const message = getClientFacingAiEditError(error);
-            writeEvent("error", { error: message });
+            const details = getDebugErrorDetails(error);
+            console.error("Error generating AI ATS edits (stream):", error);
+            writeEvent("error", {
+              error: message,
+              ...(details ? { details } : {}),
+            });
             controller.close();
           }
         })();
@@ -966,8 +1442,12 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error("Error generating AI ATS edits:", error);
+    const details = getDebugErrorDetails(error);
     return NextResponse.json(
-      { error: getClientFacingAiEditError(error) },
+      {
+        error: getClientFacingAiEditError(error),
+        ...(details ? { details } : {}),
+      },
       { status: isTransientAiError(error) ? 503 : 500 }
     );
   }
