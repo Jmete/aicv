@@ -5,20 +5,28 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { createId } from "@/lib/id";
-import type { EducationEntry, EducationOrder } from "@/types";
+import type {
+  EducationEntry,
+  EducationMetadataPlacement,
+  EducationOrder,
+} from "@/types";
 import { Plus, Trash2 } from "lucide-react";
 
 interface EducationEditorProps {
   education: EducationEntry[];
   order: EducationOrder;
+  metadataPlacement: EducationMetadataPlacement;
   onOrderChange: (order: EducationOrder) => void;
+  onMetadataPlacementChange: (placement: EducationMetadataPlacement) => void;
   onChange: (education: EducationEntry[]) => void;
 }
 
 export function EducationEditor({
   education,
   order,
+  metadataPlacement,
   onOrderChange,
+  onMetadataPlacementChange,
   onChange,
 }: EducationEditorProps) {
   const addEntry = () => {
@@ -66,6 +74,27 @@ export function EducationEditor({
             className="h-7 px-2 text-[11px]"
           >
             University on Top
+          </ToggleGroupItem>
+        </ToggleGroup>
+
+        <Label className="pt-1 text-xs text-muted-foreground">
+          GPA and Other
+        </Label>
+        <ToggleGroup
+          type="single"
+          value={metadataPlacement}
+          onValueChange={(value) => {
+            if (value) {
+              onMetadataPlacementChange(value as EducationMetadataPlacement);
+            }
+          }}
+          className="justify-start"
+        >
+          <ToggleGroupItem value="inline" className="h-7 px-2 text-[11px]">
+            Inline with University
+          </ToggleGroupItem>
+          <ToggleGroupItem value="stacked" className="h-7 px-2 text-[11px]">
+            Below University
           </ToggleGroupItem>
         </ToggleGroup>
       </div>

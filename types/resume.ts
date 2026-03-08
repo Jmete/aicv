@@ -67,6 +67,7 @@ export interface EducationEntry {
 
 export type ExperienceOrder = "title-first" | "company-first";
 export type EducationOrder = "degree-first" | "institution-first";
+export type EducationMetadataPlacement = "inline" | "stacked";
 export type TextAlignment = "left" | "center" | "right";
 
 export interface FontSizeSettings {
@@ -104,6 +105,7 @@ export type SectionKey = keyof SectionVisibility;
 export interface LayoutPreferences {
   experienceOrder: ExperienceOrder;
   educationOrder: EducationOrder;
+  educationMetadataPlacement: EducationMetadataPlacement;
   sectionOrder: SectionKey[];
   contactOrder: ContactFieldKey[];
   headerAlignment: HeaderAlignment;

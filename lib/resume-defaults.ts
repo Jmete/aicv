@@ -109,6 +109,7 @@ export const DEFAULT_LAYOUT_SPACING: LayoutSpacing = {
 export const DEFAULT_LAYOUT_PREFERENCES: {
   experienceOrder: "title-first" | "company-first";
   educationOrder: "degree-first" | "institution-first";
+  educationMetadataPlacement: "inline" | "stacked";
   sectionOrder: ("summary" | "experience" | "projects" | "education" | "skills")[];
   contactOrder: ContactFieldKey[];
   headerAlignment: {
@@ -147,6 +148,7 @@ export const DEFAULT_LAYOUT_PREFERENCES: {
 } = {
   experienceOrder: "title-first",
   educationOrder: "degree-first",
+  educationMetadataPlacement: "inline",
   sectionOrder: ["summary", "experience", "projects", "education", "skills"],
   contactOrder: DEFAULT_CONTACT_ORDER,
   headerAlignment: DEFAULT_HEADER_ALIGNMENT,

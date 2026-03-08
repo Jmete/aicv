@@ -30,6 +30,7 @@ const SECTION_KEYS = ["summary", "experience", "projects", "education", "skills"
 const MARGIN_PRESETS = ["narrow", "normal", "moderate"] as const;
 const EXPERIENCE_ORDER = ["title-first", "company-first"] as const;
 const EDUCATION_ORDER = ["degree-first", "institution-first"] as const;
+const EDUCATION_METADATA_PLACEMENT = ["inline", "stacked"] as const;
 const TEXT_ALIGNMENTS = ["left", "center", "right"] as const;
 const PAPER_SIZES = ["a4", "letter"] as const;
 
@@ -427,6 +428,11 @@ const normalizeResumeData = (input: unknown): ResumeData | null => {
         layoutInput.educationOrder,
         EDUCATION_ORDER,
         base.layoutPreferences.educationOrder
+      ),
+      educationMetadataPlacement: asEnum(
+        layoutInput.educationMetadataPlacement,
+        EDUCATION_METADATA_PLACEMENT,
+        base.layoutPreferences.educationMetadataPlacement
       ),
       sectionOrder: normalizeOrderedValues(
         layoutInput.sectionOrder,

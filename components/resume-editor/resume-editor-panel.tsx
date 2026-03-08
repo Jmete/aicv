@@ -293,12 +293,22 @@ export function ResumeEditorPanel({
               <EducationEditor
                 education={resumeData.education}
                 order={layoutPreferences.educationOrder}
+                metadataPlacement={layoutPreferences.educationMetadataPlacement}
                 onOrderChange={(educationOrder) =>
                   onResumeUpdate({
                     ...resumeData,
                     layoutPreferences: {
                       ...layoutPreferences,
                       educationOrder,
+                    },
+                  })
+                }
+                onMetadataPlacementChange={(educationMetadataPlacement) =>
+                  onResumeUpdate({
+                    ...resumeData,
+                    layoutPreferences: {
+                      ...layoutPreferences,
+                      educationMetadataPlacement,
                     },
                   })
                 }

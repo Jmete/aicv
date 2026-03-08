@@ -240,6 +240,7 @@ const normalizeResumeFromDebugInput = (
   const alignments = ["left", "center", "right"] as const;
   const experienceOrders = ["title-first", "company-first"] as const;
   const educationOrders = ["degree-first", "institution-first"] as const;
+  const educationMetadataPlacements = ["inline", "stacked"] as const;
   const sectionKeys = ["summary", "experience", "projects", "education", "skills"] as const;
   const contactKeys = [
     "email",
@@ -435,6 +436,11 @@ const normalizeResumeFromDebugInput = (
         layoutPreferences?.educationOrder,
         educationOrders,
         fallback.layoutPreferences.educationOrder
+      ),
+      educationMetadataPlacement: asOneOf(
+        layoutPreferences?.educationMetadataPlacement,
+        educationMetadataPlacements,
+        fallback.layoutPreferences.educationMetadataPlacement
       ),
       sectionOrder:
         normalizedSectionOrder.length > 0
@@ -3206,6 +3212,8 @@ export function ResumeViewer({
   const hasSkills = skills.length > 0;
   const experienceOrder = resolvedLayoutPreferences.experienceOrder;
   const educationOrder = resolvedLayoutPreferences.educationOrder;
+  const educationMetadataPlacement =
+    resolvedLayoutPreferences.educationMetadataPlacement;
   const resumeSpacing = resolvedLayoutPreferences.spacing;
   const resumeHeaderContentGap = Math.max(0, resumeSpacing.entryGap - 2);
   const orderedSections = useMemo(() => {
@@ -4214,6 +4222,90 @@ export function ResumeViewer({
     const gpaPath = `education[${entryIndex}].gpa`;
     const otherPath = `education[${entryIndex}].other`;
     const locationPath = `education[${entryIndex}].location`;
+    const institutionOnPrimaryLine = primaryField === "institution";
+    const renderEducationMetadata = (placement: "inline" | "stacked") => {
+      if (!entry.gpa && !entry.other) {
+        return null;
+      }
+
+      const gpaValue = entry.gpa ? (
+        <span className="inline-flex items-baseline gap-1">
+          <span
+            className="text-gray-500 dark:text-gray-400"
+            style={resumeFontSizeStyles.itemMeta}
+          >
+            GPA:
+          </span>
+          {renderWithFeedback(
+            gpaPath,
+            <EditableText
+              value={entry.gpa}
+              onChange={(value) =>
+                updateTextField(gpaPath, (current) => ({
+                  ...current,
+                  education: current.education.map((item) =>
+                    item.id === entry.id ? { ...item, gpa: value } : item
+                  ),
+                }))
+              }
+              placeholder="GPA"
+              fieldPath={gpaPath}
+            />
+          )}
+        </span>
+      ) : null;
+
+      const otherValue = entry.other
+        ? renderWithFeedback(
+            otherPath,
+            <EditableText
+              value={entry.other}
+              onChange={(value) =>
+                updateTextField(otherPath, (current) => ({
+                  ...current,
+                  education: current.education.map((item) =>
+                    item.id === entry.id ? { ...item, other: value } : item
+                  ),
+                }))
+              }
+              placeholder="Honours"
+              fieldPath={otherPath}
+            />
+          )
+        : null;
+
+      if (placement === "stacked") {
+        return (
+          <p
+            className="leading-[1.1] text-gray-600 dark:text-gray-400"
+            style={resumeFontSizeStyles.itemMeta}
+          >
+            {gpaValue}
+            {gpaValue && otherValue ? (
+              <span className="text-gray-400"> | </span>
+            ) : null}
+            {otherValue}
+          </p>
+        );
+      }
+
+      return (
+        <>
+          {gpaValue ? (
+            <>
+              <span className="text-gray-400"> | </span>
+              {gpaValue}
+            </>
+          ) : null}
+          {otherValue ? (
+            <>
+              <span className="text-gray-400"> | </span>
+              {otherValue}
+            </>
+          ) : null}
+        </>
+      );
+    };
 
     return (
       <div className="group space-y-0.5">
@@ -4243,6 +4335,9 @@ export function ResumeViewer({
                 fieldPath={primaryPath}
               />
             )}
+            {institutionOnPrimaryLine && educationMetadataPlacement === "inline"
+              ? renderEducationMetadata("inline")
+              : null}
           </p>
           <div className="flex items-baseline gap-1">
             {!isPrintPreviewMode && (
@@ -4281,6 +4376,9 @@ export function ResumeViewer({
             </span>
           </div>
         </div>
+        {institutionOnPrimaryLine && educationMetadataPlacement === "stacked"
+          ? renderEducationMetadata("stacked")
+          : null}
         <div className="flex items-baseline justify-between gap-2">
           <p
             className="leading-[1.1] text-gray-700 dark:text-gray-300"
@@ -4307,60 +4405,9 @@ export function ResumeViewer({
                 fieldPath={secondaryPath}
               />
             )}
-            {entry.gpa && (
-              <>
-                <span className="text-gray-400"> | </span>
-                <span className="inline-flex items-baseline gap-1">
-                  <span
-                    className="text-gray-500 dark:text-gray-400"
-                    style={resumeFontSizeStyles.itemMeta}
-                  >
-                    GPA:
-                  </span>
-                  {renderWithFeedback(
-                    gpaPath,
-                    <EditableText
-                      value={entry.gpa}
-                      onChange={(value) =>
-                        updateTextField(gpaPath, (current) => ({
-                          ...current,
-                          education: current.education.map((item) =>
-                            item.id === entry.id
-                              ? { ...item, gpa: value }
-                              : item
-                          ),
-                        }))
-                      }
-                      placeholder="GPA"
-                      fieldPath={gpaPath}
-                    />
-                  )}
-                </span>
-              </>
-            )}
-            {entry.other && (
-              <>
-                <span className="text-gray-400"> | </span>
-                {renderWithFeedback(
-                  otherPath,
-                  <EditableText
-                    value={entry.other}
-                    onChange={(value) =>
-                      updateTextField(otherPath, (current) => ({
-                        ...current,
-                        education: current.education.map((item) =>
-                          item.id === entry.id
-                            ? { ...item, other: value }
-                            : item
-                        ),
-                      }))
-                    }
-                    placeholder="Honours"
-                    fieldPath={otherPath}
-                  />
-                )}
-              </>
-            )}
+            {!institutionOnPrimaryLine && educationMetadataPlacement === "inline"
+              ? renderEducationMetadata("inline")
+              : null}
           </p>
           <p
             className="text-right leading-[1.1] text-gray-600 dark:text-gray-400"
@@ -4386,6 +4433,9 @@ export function ResumeViewer({
             )}
           </p>
         </div>
+        {!institutionOnPrimaryLine && educationMetadataPlacement === "stacked"
+          ? renderEducationMetadata("stacked")
+          : null}
       </div>
     );
   };
