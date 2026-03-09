@@ -1660,10 +1660,12 @@ export function ResumeViewer({
   }) => {
     const { width, height } = PAPER_DIMENSIONS[resolvedPageSettings.paperSize];
 
-    // Calculate margin percentages relative to paper width for responsive scaling
-    const marginTopPercent = (margins.top / height) * 100;
+    // CSS percentage padding resolves against the element width on both axes.
+    // Use paper width for every side so the rendered content box matches the
+    // pagination math and the exported print layout.
+    const marginTopPercent = (margins.top / width) * 100;
     const marginRightPercent = (margins.right / width) * 100;
-    const marginBottomPercent = (margins.bottom / height) * 100;
+    const marginBottomPercent = (margins.bottom / width) * 100;
     const marginLeftPercent = (margins.left / width) * 100;
 
     return {
