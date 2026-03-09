@@ -28,6 +28,7 @@ export interface LayoutSpacing {
   bulletGap: number;
   entryGap: number;
   sectionGap: number;
+  sectionContentGap: number;
 }
 
 export const MARGIN_PRESETS: Record<MarginPreset, PageMargins> = {
@@ -104,6 +105,7 @@ export const DEFAULT_LAYOUT_SPACING: LayoutSpacing = {
   bulletGap: 2,
   entryGap: 6,
   sectionGap: 8,
+  sectionContentGap: 4,
 };
 
 export const DEFAULT_LAYOUT_PREFERENCES: {

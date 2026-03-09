@@ -272,6 +272,9 @@ const normalizeSpacing = (
     sectionGap: clampLayoutSpacing(
       asNumber(source.sectionGap, fallback.sectionGap)
     ),
+    sectionContentGap: clampLayoutSpacing(
+      asNumber(source.sectionContentGap, fallback.sectionContentGap)
+    ),
   };
 };
 

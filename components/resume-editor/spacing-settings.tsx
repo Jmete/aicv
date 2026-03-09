@@ -40,6 +40,11 @@ const SPACING_FIELDS = [
     label: "Section Spacing",
     description: "Space between major sections like Experience and Education.",
   },
+  {
+    key: "sectionContentGap",
+    label: "Header to First Entry",
+    description: "Space between a section header and its first item.",
+  },
 ] as const;
 
 type SpacingKey = (typeof SPACING_FIELDS)[number]["key"];

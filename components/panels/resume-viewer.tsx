@@ -572,6 +572,12 @@ const normalizeResumeFromDebugInput = (
             fallback.layoutPreferences.spacing.sectionGap
           )
         ),
+        sectionContentGap: clampLayoutSpacing(
+          asNumber(
+            spacing?.sectionContentGap,
+            fallback.layoutPreferences.spacing.sectionContentGap
+          )
+        ),
       },
       hyperlinkUnderline: asBoolean(
         layoutPreferences?.hyperlinkUnderline,
@@ -3217,7 +3223,7 @@ export function ResumeViewer({
   const educationMetadataPlacement =
     resolvedLayoutPreferences.educationMetadataPlacement;
   const resumeSpacing = resolvedLayoutPreferences.spacing;
-  const resumeHeaderContentGap = Math.max(0, resumeSpacing.entryGap - 2);
+  const resumeHeaderContentGap = resumeSpacing.sectionContentGap;
   const orderedSections = useMemo(() => {
     const fallback: SectionKey[] = [
       "summary",
