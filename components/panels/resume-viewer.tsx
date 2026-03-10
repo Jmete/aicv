@@ -2069,6 +2069,12 @@ export function ResumeViewer({
                 width: ${width}mm;
               }
 
+              .pdf-export-root,
+              .pdf-export-root * {
+                font-variant-ligatures: none !important;
+                font-feature-settings: "liga" 0, "clig" 0, "calt" 0 !important;
+              }
+
               .export-page {
                 width: ${width}mm;
                 height: ${height}mm;
@@ -2118,7 +2124,13 @@ export function ResumeViewer({
             </main>
             <script>
               (() => {
-                const startPrint = () => {
+                const startPrint = async () => {
+                  if (document.fonts?.ready) {
+                    try {
+                      await document.fonts.ready;
+                    } catch {}
+                  }
+
                   window.setTimeout(() => {
                     window.focus();
                     window.print();
